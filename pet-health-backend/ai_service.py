@@ -1,102 +1,126 @@
+import json
+import os
+
+from openai import OpenAI
+
+from prompt import SYSTEM_PROMPT
 from schemas import AnalyzeRequest, AnalyzeResponse
 
 
 def analyze_symptoms(request: AnalyzeRequest) -> AnalyzeResponse:
-    symptom_blob = " ".join(
-        [request.symptomText.lower(), request.durationText.lower(), request.extraNotes.lower()]
-    )
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return fallback_response()
 
-    emergency_keywords = [
-        "trouble breathing",
-        "can’t breathe",
-        "cannot breathe",
-        "seizure",
-        "collapsed",
-        "collapse",
-        "unresponsive",
-        "poison",
-        "toxin",
-        "bloated abdomen",
-        "can’t pee",
-        "cannot pee",
-        "unable to urinate",
-        "severe bleeding",
-    ]
+    client = OpenAI(api_key=api_key)
 
-    soon_keywords = [
-        "vomit",
-        "vomiting",
-        "diarrhea",
-        "not eating",
-        "lethargic",
-        "lethargy",
-        "limping",
-        "pain",
-        "coughing",
-        "ear infection",
-        "eye discharge",
-    ]
+    user_prompt = build_user_prompt(request)
 
-    if any(keyword in symptom_blob for keyword in emergency_keywords):
-        return AnalyzeResponse(
-            urgency="emergency",
-            possibleCauses=[
-                "A potentially serious medical issue",
-                "A condition needing urgent veterinary evaluation",
+    try:
+        response = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
             ],
-            nextSteps=[
-                "Seek emergency veterinary care now",
-                "Keep your pet calm and transport safely",
-                "Do not wait for symptoms to resolve on their own",
-            ],
-            redFlags=[
-                "Breathing difficulty",
-                "Collapse or unresponsiveness",
-                "Possible toxin exposure",
-            ],
-            vetRecommended=True,
-            summary="These symptoms may indicate an emergency. Your pet should be evaluated by a veterinarian immediately.",
         )
 
-    if any(keyword in symptom_blob for keyword in soon_keywords):
-        return AnalyzeResponse(
-            urgency="soon",
-            possibleCauses=[
-                "Stomach upset or dietary indiscretion",
-                "An early infection or inflammatory problem",
-                "Another non-specific illness needing monitoring",
-            ],
-            nextSteps=[
-                "Monitor appetite, water intake, and energy",
-                "Avoid giving human medications",
-                "Arrange a veterinary visit soon if symptoms continue or worsen",
-            ],
-            redFlags=[
-                "Repeated vomiting or diarrhea",
-                "Trouble breathing",
-                "Severe lethargy",
-                "Pain that is worsening",
-            ],
-            vetRecommended=True,
-            summary="This may not be an emergency right now, but the symptoms suggest your pet should be watched closely and seen by a veterinarian if not improving.",
-        )
+        content = response.choices[0].message.content or "{}"
+        payload = json.loads(content)
 
+        return AnalyzeResponse(
+            urgency=normalize_urgency(payload.get("urgency")),
+            possibleCauses=clean_list(payload.get("possibleCauses"), fallback=["Unclear symptom pattern"]),
+            nextSteps=clean_list(
+                payload.get("nextSteps"),
+                fallback=["Monitor symptoms closely", "Contact a veterinarian if symptoms worsen"],
+            ),
+            redFlags=clean_list(
+                payload.get("redFlags"),
+                fallback=["Trouble breathing", "Repeated vomiting", "Marked low energy"],
+            ),
+            vetRecommended=bool(payload.get("vetRecommended", True)),
+            summary=clean_text(
+                payload.get("summary"),
+                fallback="A licensed veterinarian should evaluate persistent, worsening, or severe symptoms.",
+            ),
+        )
+    except Exception:
+        return fallback_response()
+
+
+def build_user_prompt(request: AnalyzeRequest) -> str:
+    return f"""
+Analyze this pet symptom report and return JSON with exactly these keys:
+- urgency
+- possibleCauses
+- nextSteps
+- redFlags
+- vetRecommended
+- summary
+
+Pet profile:
+- Name: {request.pet.name or 'Unknown'}
+- Species: {request.pet.species or 'Unknown'}
+- Breed: {request.pet.breed or 'Unknown'}
+- Age: {request.pet.age or 'Unknown'}
+- Weight: {request.pet.weight or 'Unknown'}
+- Notes: {request.pet.notes or 'None'}
+
+Symptom report:
+- Symptoms: {request.symptomText}
+- Duration: {request.durationText or 'Unknown'}
+- Extra notes: {request.extraNotes or 'None'}
+
+Output requirements:
+- urgency must be one of: emergency, soon, monitor
+- possibleCauses should have 2 to 4 short items
+- nextSteps should have 2 to 4 short items
+- redFlags should have 3 to 5 short items
+- summary should be concise and safe
+- Use plain English
+- Avoid certainty
+""".strip()
+
+
+def normalize_urgency(value: str | None) -> str:
+    if value in {"emergency", "soon", "monitor"}:
+        return value
+    return "soon"
+
+
+def clean_list(value, fallback: list[str]) -> list[str]:
+    if isinstance(value, list):
+        cleaned = [str(item).strip() for item in value if str(item).strip()]
+        if cleaned:
+            return cleaned[:5]
+    return fallback
+
+
+def clean_text(value, fallback: str) -> str:
+    text = str(value).strip() if value is not None else ""
+    return text or fallback
+
+
+def fallback_response() -> AnalyzeResponse:
     return AnalyzeResponse(
-        urgency="monitor",
+        urgency="soon",
         possibleCauses=[
-            "A mild self-limited issue",
-            "Minor irritation or temporary stomach upset",
+            "Stomach upset or dietary indiscretion",
+            "A mild illness or inflammatory issue",
         ],
         nextSteps=[
-            "Monitor symptoms closely",
-            "Keep notes on any changes",
-            "Contact a veterinarian if symptoms worsen or persist",
+            "Monitor appetite, water intake, and energy",
+            "Avoid giving human medications",
+            "Contact a veterinarian if symptoms continue or worsen",
         ],
         redFlags=[
             "Trouble breathing",
             "Repeated vomiting",
-            "Marked low energy",
+            "Severe lethargy",
         ],
-        vetRecommended=False,
-        summary="This may be mild, but continued monitoring is important. A licensed veterinarian should evaluate any worsening symptoms.",
+        vetRecommended=True,
+        summary="A licensed veterinarian should evaluate persistent, worsening, or severe symptoms.",
     )
