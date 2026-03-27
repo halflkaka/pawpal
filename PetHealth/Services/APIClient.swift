@@ -1,7 +1,7 @@
 import Foundation
 
 final class APIClient {
-    private let baseURL = URL(string: "http://127.0.0.1:8001")!
+    private let baseURL = URL(string: "http://127.0.0.1:8002")!
 
     func analyze(
         pet: PetProfile,
