@@ -47,54 +47,58 @@ struct HomeView: View {
     }
 
     private var petCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(storedPets.count > 1 ? "Current Pet" : "Pet")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
-            if let pet = selectedPet {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(pet.name.isEmpty ? "Your Pet" : pet.name)
-                        .font(.system(size: 28, weight: .bold))
-                    Text(displayLine(for: pet))
+        NavigationLink {
+            PetProfileView()
+        } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(storedPets.count > 1 ? "Current Pet" : "Pet")
+                        .font(.headline)
                         .foregroundStyle(.secondary)
-                    Text(detailLine(for: pet))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    if storedPets.count > 1 {
-                        Picker("Selected Pet", selection: $selectedPetID) {
-                            ForEach(storedPets) { pet in
-                                Text(pet.name.isEmpty ? "Unnamed Pet" : pet.name)
-                                    .tag(pet.id.uuidString)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-
-                    NavigationLink {
-                        PetProfileView()
-                    } label: {
-                        Label(storedPets.count > 1 ? "Manage Pet Profiles" : "Edit Pet Profile", systemImage: "square.and.pencil")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.top, 6)
-                    }
+                    Spacer()
+                    Label("Manage", systemImage: "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.blue)
                 }
-            } else {
-                Text("No pet profile yet")
-                    .foregroundStyle(.secondary)
+
+                if let pet = selectedPet {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(pet.name.isEmpty ? "Your Pet" : pet.name)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundStyle(.primary)
+                        Text(displayLine(for: pet))
+                            .foregroundStyle(.secondary)
+                        Text(detailLine(for: pet))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        if storedPets.count > 1 {
+                            Picker("Selected Pet", selection: $selectedPetID) {
+                                ForEach(storedPets) { pet in
+                                    Text(pet.name.isEmpty ? "Unnamed Pet" : pet.name)
+                                        .tag(pet.id.uuidString)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                    }
+                } else {
+                    Text("No pet profile yet")
+                        .foregroundStyle(.secondary)
+                }
             }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [Color.blue.opacity(0.16), Color.teal.opacity(0.10)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                LinearGradient(
+                    colors: [Color.blue.opacity(0.16), Color.teal.opacity(0.10)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
             )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private var quickActions: some View {
@@ -132,6 +136,17 @@ struct HomeView: View {
                     subtitle: "Open saved symptom checks",
                     systemImage: "clock.arrow.circlepath",
                     tint: .orange
+                )
+            }
+
+            NavigationLink {
+                PetProfileView()
+            } label: {
+                actionCard(
+                    title: "Add or Manage Pets",
+                    subtitle: "Create another pet profile or switch the active pet",
+                    systemImage: "pawprint.circle.fill",
+                    tint: .teal
                 )
             }
         }
