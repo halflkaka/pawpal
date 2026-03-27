@@ -28,6 +28,18 @@ final class StoredPetProfile {
         self.weight = weight
         self.notes = notes
     }
+
+    func toPetProfile() -> PetProfile {
+        PetProfile(
+            id: id,
+            name: name,
+            species: species,
+            breed: breed,
+            age: age,
+            weight: weight,
+            notes: notes
+        )
+    }
 }
 
 @Model
@@ -65,5 +77,29 @@ final class StoredSymptomCheck {
         self.possibleCausesJSON = possibleCausesJSON
         self.nextStepsJSON = nextStepsJSON
         self.redFlagsJSON = redFlagsJSON
+    }
+
+    func toAnalysisResult() -> AnalysisResult {
+        AnalysisResult(
+            urgency: urgency,
+            possibleCauses: Self.decode(possibleCausesJSON),
+            nextSteps: Self.decode(nextStepsJSON),
+            redFlags: Self.decode(redFlagsJSON),
+            vetRecommended: urgency != "monitor",
+            summary: summary
+        )
+    }
+
+    static func encode(_ values: [String]) -> String {
+        let data = (try? JSONEncoder().encode(values)) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "[]"
+    }
+
+    static func decode(_ value: String) -> [String] {
+        guard let data = value.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return decoded
     }
 }

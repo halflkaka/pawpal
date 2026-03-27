@@ -1,17 +1,17 @@
 import SwiftUI
+import SwiftData
 
 struct HistoryView: View {
-    @ObservedObject var viewModel: HistoryViewModel
+    @Query(sort: \StoredSymptomCheck.date, order: .reverse) private var checks: [StoredSymptomCheck]
 
     var body: some View {
-        List(viewModel.checks) { check in
+        List(checks) { check in
             NavigationLink {
                 ResultView(
                     symptomText: check.symptomText,
                     durationText: check.durationText,
                     extraNotes: check.extraNotes,
-                    result: check.result,
-                    historyViewModel: viewModel
+                    result: check.toAnalysisResult()
                 )
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
@@ -20,12 +20,17 @@ struct HistoryView: View {
                     Text(check.date.formatted(date: .abbreviated, time: .shortened))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(check.result.urgency.capitalized)
+                    Text(check.urgency.capitalized)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .navigationTitle("History")
+        .overlay {
+            if checks.isEmpty {
+                ContentUnavailableView("No Saved Checks", systemImage: "clock.arrow.circlepath", description: Text("Saved symptom checks will appear here."))
+            }
+        }
     }
 }

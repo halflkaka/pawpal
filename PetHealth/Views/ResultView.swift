@@ -1,11 +1,15 @@
 import SwiftUI
+import SwiftData
 
 struct ResultView: View {
+    @Environment(\.modelContext) private var modelContext
+
     let symptomText: String
     let durationText: String
     let extraNotes: String
     let result: AnalysisResult
-    @ObservedObject var historyViewModel: HistoryViewModel
+
+    @State private var didSave = false
 
     var body: some View {
         List {
@@ -37,15 +41,10 @@ struct ResultView: View {
             }
 
             Section("Actions") {
-                Button("Save Check") {
-                    let check = SymptomCheck(
-                        symptomText: symptomText,
-                        durationText: durationText,
-                        extraNotes: extraNotes,
-                        result: result
-                    )
-                    historyViewModel.addCheck(check)
+                Button(didSave ? "Saved" : "Save Check") {
+                    saveCheck()
                 }
+                .disabled(didSave)
 
                 NavigationLink("Find Nearby Vet") {
                     VetFinderView()
@@ -53,5 +52,20 @@ struct ResultView: View {
             }
         }
         .navigationTitle("Result")
+    }
+
+    private func saveCheck() {
+        let stored = StoredSymptomCheck(
+            symptomText: symptomText,
+            durationText: durationText,
+            extraNotes: extraNotes,
+            urgency: result.urgency,
+            summary: result.summary,
+            possibleCausesJSON: StoredSymptomCheck.encode(result.possibleCauses),
+            nextStepsJSON: StoredSymptomCheck.encode(result.nextSteps),
+            redFlagsJSON: StoredSymptomCheck.encode(result.redFlags)
+        )
+        modelContext.insert(stored)
+        didSave = true
     }
 }

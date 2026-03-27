@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 @main
 struct PetHealthApp: App {
@@ -6,5 +7,6 @@ struct PetHealthApp: App {
         WindowGroup {
             ContentView()
         }
+        .modelContainer(for: [StoredPetProfile.self, StoredSymptomCheck.self])
     }
 }

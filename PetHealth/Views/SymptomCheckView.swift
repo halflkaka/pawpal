@@ -1,8 +1,7 @@
 import SwiftUI
 
 struct SymptomCheckView: View {
-    let pet: PetProfile
-    @ObservedObject var historyViewModel: HistoryViewModel
+    let pet: StoredPetProfile?
     @StateObject private var viewModel = SymptomCheckViewModel()
     @State private var navigateToResult = false
 
@@ -19,7 +18,7 @@ struct SymptomCheckView: View {
             Section {
                 Button {
                     Task {
-                        await viewModel.analyze(using: pet)
+                        await viewModel.analyze(using: pet?.toPetProfile() ?? PetProfile())
                         if viewModel.result != nil {
                             navigateToResult = true
                         }
@@ -48,8 +47,7 @@ struct SymptomCheckView: View {
                     symptomText: viewModel.symptomText,
                     durationText: viewModel.durationText,
                     extraNotes: viewModel.extraNotes,
-                    result: result,
-                    historyViewModel: historyViewModel
+                    result: result
                 )
             }
         }
