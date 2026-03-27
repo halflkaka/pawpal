@@ -46,6 +46,8 @@ final class StoredPetProfile {
 final class StoredSymptomCheck {
     @Attribute(.unique) var id: UUID
     var date: Date
+    var petID: UUID?
+    var petName: String
     var symptomText: String
     var durationText: String
     var extraNotes: String
@@ -58,6 +60,8 @@ final class StoredSymptomCheck {
     init(
         id: UUID = UUID(),
         date: Date = .now,
+        petID: UUID? = nil,
+        petName: String = "",
         symptomText: String,
         durationText: String,
         extraNotes: String,
@@ -69,6 +73,8 @@ final class StoredSymptomCheck {
     ) {
         self.id = id
         self.date = date
+        self.petID = petID
+        self.petName = petName
         self.symptomText = symptomText
         self.durationText = durationText
         self.extraNotes = extraNotes

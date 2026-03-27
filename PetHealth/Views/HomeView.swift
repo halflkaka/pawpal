@@ -5,9 +5,23 @@ struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \StoredPetProfile.name) private var storedPets: [StoredPetProfile]
     @Query(sort: \StoredSymptomCheck.date, order: .reverse) private var storedChecks: [StoredSymptomCheck]
+    @AppStorage("selectedPetID") private var selectedPetID = ""
 
-    private var pet: StoredPetProfile? {
-        storedPets.first
+    private var selectedPet: StoredPetProfile? {
+        if let match = storedPets.first(where: { $0.id.uuidString == selectedPetID }) {
+            return match
+        }
+        return storedPets.first
+    }
+
+    private var filteredChecks: [StoredSymptomCheck] {
+        guard let selectedPet else { return storedChecks }
+        return storedChecks.filter { check in
+            if let petID = check.petID {
+                return petID == selectedPet.id
+            }
+            return true
+        }
     }
 
     var body: some View {
@@ -23,19 +37,23 @@ struct HomeView: View {
         .navigationTitle("Pet Health")
         .task {
             if storedPets.isEmpty {
-                modelContext.insert(StoredPetProfile(name: "", species: "Dog", breed: "", age: "", weight: "", notes: ""))
+                let pet = StoredPetProfile(name: "", species: "Dog", breed: "", age: "", weight: "", notes: "")
+                modelContext.insert(pet)
+                selectedPetID = pet.id.uuidString
+            } else if selectedPet == nil, let firstPet = storedPets.first {
+                selectedPetID = firstPet.id.uuidString
             }
         }
     }
 
     private var petCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Current Pet")
+            Text(storedPets.count > 1 ? "Current Pet" : "Pet")
                 .font(.headline)
                 .foregroundStyle(.secondary)
 
-            if let pet {
-                VStack(alignment: .leading, spacing: 8) {
+            if let pet = selectedPet {
+                VStack(alignment: .leading, spacing: 10) {
                     Text(pet.name.isEmpty ? "Your Pet" : pet.name)
                         .font(.system(size: 28, weight: .bold))
                     Text(displayLine(for: pet))
@@ -44,10 +62,20 @@ struct HomeView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
+                    if storedPets.count > 1 {
+                        Picker("Selected Pet", selection: $selectedPetID) {
+                            ForEach(storedPets) { pet in
+                                Text(pet.name.isEmpty ? "Unnamed Pet" : pet.name)
+                                    .tag(pet.id.uuidString)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
                     NavigationLink {
                         PetProfileView()
                     } label: {
-                        Label("Edit Pet Profile", systemImage: "square.and.pencil")
+                        Label(storedPets.count > 1 ? "Manage Pet Profiles" : "Edit Pet Profile", systemImage: "square.and.pencil")
                             .font(.subheadline.weight(.semibold))
                             .padding(.top, 6)
                     }
@@ -75,11 +103,11 @@ struct HomeView: View {
                 .font(.headline)
 
             NavigationLink {
-                SymptomCheckView(pet: pet)
+                SymptomCheckView(pet: selectedPet)
             } label: {
                 actionCard(
                     title: "Check Symptoms",
-                    subtitle: "Describe what’s going on and get guidance",
+                    subtitle: selectedPet == nil ? "Describe what’s going on and get guidance" : "Analyze symptoms for \(selectedPetName(fallback: "your pet"))",
                     systemImage: "stethoscope",
                     tint: .blue
                 )
@@ -97,7 +125,7 @@ struct HomeView: View {
             }
 
             NavigationLink {
-                HistoryView()
+                HistoryView(selectedPetID: selectedPet?.id)
             } label: {
                 actionCard(
                     title: "View History",
@@ -114,15 +142,16 @@ struct HomeView: View {
             Text("Recent Checks")
                 .font(.headline)
 
-            if storedChecks.isEmpty {
+            if filteredChecks.isEmpty {
                 cardContainer {
-                    Text("No saved checks yet")
+                    Text(selectedPet == nil ? "No saved checks yet" : "No saved checks yet for \(selectedPetName(fallback: "this pet"))")
                         .foregroundStyle(.secondary)
                 }
             } else {
-                ForEach(storedChecks.prefix(3)) { check in
+                ForEach(filteredChecks.prefix(3)) { check in
                     NavigationLink {
                         ResultView(
+                            petName: displayPetName(for: check),
                             symptomText: check.symptomText,
                             durationText: check.durationText,
                             extraNotes: check.extraNotes,
@@ -141,6 +170,12 @@ struct HomeView: View {
                                 Spacer()
                                 Text(check.date.formatted(date: .abbreviated, time: .shortened))
                                     .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if !displayPetName(for: check).isEmpty {
+                                Label(displayPetName(for: check), systemImage: "pawprint.fill")
+                                    .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
                             }
 
@@ -208,6 +243,17 @@ struct HomeView: View {
         if age.isEmpty { return "Weight: \(weight)" }
         if weight.isEmpty { return "Age: \(age)" }
         return "Age: \(age) • Weight: \(weight)"
+    }
+
+    private func displayPetName(for check: StoredSymptomCheck) -> String {
+        let trimmed = check.petName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed
+    }
+
+    private func selectedPetName(fallback: String) -> String {
+        guard let selectedPet else { return fallback }
+        let trimmed = selectedPet.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
     }
 
     private func urgencyColor(for urgency: String) -> Color {

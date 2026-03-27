@@ -2,11 +2,23 @@ import SwiftUI
 import SwiftData
 
 struct HistoryView: View {
+    let selectedPetID: UUID?
+
     @Query(sort: \StoredSymptomCheck.date, order: .reverse) private var checks: [StoredSymptomCheck]
+
+    private var filteredChecks: [StoredSymptomCheck] {
+        guard let selectedPetID else { return checks }
+        return checks.filter { check in
+            if let petID = check.petID {
+                return petID == selectedPetID
+            }
+            return true
+        }
+    }
 
     var body: some View {
         ScrollView {
-            if checks.isEmpty {
+            if filteredChecks.isEmpty {
                 ContentUnavailableView(
                     "No Saved Checks",
                     systemImage: "clock.arrow.circlepath",
@@ -15,9 +27,10 @@ struct HistoryView: View {
                 .padding(.top, 80)
             } else {
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(checks) { check in
+                    ForEach(filteredChecks) { check in
                         NavigationLink {
                             ResultView(
+                                petName: check.petName,
                                 symptomText: check.symptomText,
                                 durationText: check.durationText,
                                 extraNotes: check.extraNotes,
@@ -38,6 +51,12 @@ struct HistoryView: View {
 
                                     Text(check.date.formatted(date: .abbreviated, time: .shortened))
                                         .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if !check.petName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    Label(check.petName, systemImage: "pawprint.fill")
+                                        .font(.caption.weight(.semibold))
                                         .foregroundStyle(.secondary)
                                 }
 

@@ -31,6 +31,8 @@ struct SymptomCheckView: View {
         .navigationDestination(isPresented: $navigateToResult) {
             if let result = viewModel.result {
                 ResultView(
+                    pet: pet,
+                    petName: petDisplayName,
                     symptomText: viewModel.symptomText,
                     durationText: viewModel.durationText,
                     extraNotes: viewModel.extraNotes,
@@ -42,7 +44,7 @@ struct SymptomCheckView: View {
 
     private var introCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("What’s going on?")
+            Text("What’s going on\(petDisplayName.isEmpty ? "" : " with \(petDisplayName)")?")
                 .font(.title2.bold())
             Text("Describe your pet’s symptoms in a few words, then add anything important like timing, appetite, energy, or behavior changes.")
                 .foregroundStyle(.secondary)
@@ -81,6 +83,12 @@ struct SymptomCheckView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Details")
                 .font(.headline)
+
+            if !petDisplayName.isEmpty {
+                Label("Checking symptoms for \(petDisplayName)", systemImage: "pawprint.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.blue)
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Symptoms")
@@ -153,6 +161,11 @@ struct SymptomCheckView: View {
             .background(Color.red.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
+    }
+
+    private var petDisplayName: String {
+        let trimmed = pet?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed
     }
 
     private func appendSymptom(_ symptom: String) {

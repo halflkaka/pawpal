@@ -4,12 +4,30 @@ import SwiftData
 struct ResultView: View {
     @Environment(\.modelContext) private var modelContext
 
+    let pet: StoredPetProfile?
+    let petName: String
     let symptomText: String
     let durationText: String
     let extraNotes: String
     let result: AnalysisResult
 
     @State private var didSave = false
+
+    init(
+        pet: StoredPetProfile? = nil,
+        petName: String = "",
+        symptomText: String,
+        durationText: String,
+        extraNotes: String,
+        result: AnalysisResult
+    ) {
+        self.pet = pet
+        self.petName = petName
+        self.symptomText = symptomText
+        self.durationText = durationText
+        self.extraNotes = extraNotes
+        self.result = result
+    }
 
     var body: some View {
         ScrollView {
@@ -39,6 +57,12 @@ struct ResultView: View {
                     .font(.system(size: 28, weight: .bold))
                     .foregroundStyle(urgencyColor)
                 Spacer()
+            }
+
+            if !petName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Label(petName, systemImage: "pawprint.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
 
             Text(urgencyDescription)
@@ -124,6 +148,8 @@ struct ResultView: View {
 
     private func saveCheck() {
         let stored = StoredSymptomCheck(
+            petID: pet?.id,
+            petName: petName,
             symptomText: symptomText,
             durationText: durationText,
             extraNotes: extraNotes,
