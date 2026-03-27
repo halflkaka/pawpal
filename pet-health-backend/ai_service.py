@@ -85,7 +85,10 @@ Output requirements:
 """.strip()
 
 
-def normalize_urgency(value: str | None) -> str:
+from typing import Optional
+
+
+def normalize_urgency(value: Optional[str]) -> str:
     if value in {"emergency", "soon", "monitor"}:
         return value
     return "soon"
