@@ -121,6 +121,7 @@ final class StoredPost {
     var petName: String
     var caption: String
     var mood: String
+    var imageSlotCount: Int
 
     init(
         id: UUID = UUID(),
@@ -128,7 +129,8 @@ final class StoredPost {
         petID: UUID? = nil,
         petName: String = "",
         caption: String,
-        mood: String
+        mood: String,
+        imageSlotCount: Int = 0
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -136,5 +138,6 @@ final class StoredPost {
         self.petName = petName
         self.caption = caption
         self.mood = mood
+        self.imageSlotCount = imageSlotCount
     }
 }

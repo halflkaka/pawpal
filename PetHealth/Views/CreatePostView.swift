@@ -8,6 +8,7 @@ struct CreatePostView: View {
     @State private var selectedPetID: UUID?
     @State private var caption = ""
     @State private var mood = ""
+    @State private var imageSlotCount = 0
     @State private var didSave = false
 
     var body: some View {
@@ -16,7 +17,7 @@ struct CreatePostView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Share a moment")
                         .font(.headline)
-                    Text("Write a small update like a pet朋友圈 post.")
+                    Text("Write a small pet update, like a simple 朋友圈 post.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -49,6 +50,15 @@ struct CreatePostView: View {
                     TextField("Happy / Sleepy / Zoomies", text: $mood)
                 }
 
+                Section("Photos") {
+                    Stepper(value: $imageSlotCount, in: 0...9) {
+                        Text(imageSlotCount == 0 ? "No photo slots" : "\(imageSlotCount) photo slot\(imageSlotCount == 1 ? "" : "s")")
+                    }
+                    Text("Placeholder for local photo support.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section {
                     Button(didSave ? "Saved" : "Post") {
                         savePost()
@@ -73,7 +83,8 @@ struct CreatePostView: View {
             petID: pet.id,
             petName: pet.name.isEmpty ? "Unnamed Pet" : pet.name,
             caption: caption,
-            mood: mood
+            mood: mood,
+            imageSlotCount: imageSlotCount
         )
 
         modelContext.insert(post)
