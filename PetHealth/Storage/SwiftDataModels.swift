@@ -112,3 +112,29 @@ final class StoredSymptomCheck {
         return decoded
     }
 }
+
+@Model
+final class StoredPost {
+    @Attribute(.unique) var id: UUID
+    var createdAt: Date
+    var petID: UUID?
+    var petName: String
+    var caption: String
+    var mood: String
+
+    init(
+        id: UUID = UUID(),
+        createdAt: Date = .now,
+        petID: UUID? = nil,
+        petName: String = "",
+        caption: String,
+        mood: String
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.petID = petID
+        self.petName = petName
+        self.caption = caption
+        self.mood = mood
+    }
+}

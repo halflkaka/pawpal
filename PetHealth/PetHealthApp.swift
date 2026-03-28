@@ -8,7 +8,8 @@ struct PetHealthApp: App {
     init() {
         let schema = Schema([
             StoredPetProfile.self,
-            StoredSymptomCheck.self
+            StoredSymptomCheck.self,
+            StoredPost.self
         ])
         let isUITesting = ProcessInfo.processInfo.arguments.contains("UI_TESTING")
         let config = ModelConfiguration(isStoredInMemoryOnly: isUITesting)

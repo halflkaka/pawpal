@@ -2,40 +2,32 @@ import SwiftUI
 
 struct ContentView: View {
     enum AppTab: Hashable {
-        case home
-        case symptomCheck
-        case history
+        case feed
+        case post
         case pets
+        case care
         case vets
     }
 
-    @State private var selectedTab: AppTab = .home
+    @State private var selectedTab: AppTab = .feed
 
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                HomeView()
+                FeedView()
             }
             .tabItem {
-                Label("Home", systemImage: "house.fill")
+                Label("Feed", systemImage: "house.fill")
             }
-            .tag(AppTab.home)
+            .tag(AppTab.feed)
 
             NavigationStack {
-                SymptomCheckView(pet: nil)
+                CreatePostView()
             }
             .tabItem {
-                Label("Check", systemImage: "stethoscope")
+                Label("Post", systemImage: "plus.app.fill")
             }
-            .tag(AppTab.symptomCheck)
-
-            NavigationStack {
-                HistoryView(selectedPetID: nil)
-            }
-            .tabItem {
-                Label("History", systemImage: "clock.arrow.circlepath")
-            }
-            .tag(AppTab.history)
+            .tag(AppTab.post)
 
             NavigationStack {
                 PetProfileView()
@@ -44,6 +36,14 @@ struct ContentView: View {
                 Label("Pets", systemImage: "pawprint.fill")
             }
             .tag(AppTab.pets)
+
+            NavigationStack {
+                HomeView()
+            }
+            .tabItem {
+                Label("Care", systemImage: "stethoscope")
+            }
+            .tag(AppTab.care)
 
             NavigationStack {
                 VetFinderView()
