@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import SwiftData
 
@@ -8,7 +9,8 @@ struct CreatePostView: View {
     @State private var selectedPetID: UUID?
     @State private var caption = ""
     @State private var mood = ""
-    @State private var imageSlotCount = 0
+    @State private var selectedItems: [PhotosPickerItem] = []
+    @State private var selectedImageData: [Data] = []
     @State private var didSave = false
 
     var body: some View {
@@ -51,12 +53,26 @@ struct CreatePostView: View {
                 }
 
                 Section("Photos") {
-                    Stepper(value: $imageSlotCount, in: 0...9) {
-                        Text(imageSlotCount == 0 ? "No photo slots" : "\(imageSlotCount) photo slot\(imageSlotCount == 1 ? "" : "s")")
+                    PhotosPicker(selection: $selectedItems, maxSelectionCount: 9, matching: .images) {
+                        Label("Choose Photos", systemImage: "photo.on.rectangle.angled")
                     }
-                    Text("Placeholder for local photo support.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+
+                    if !selectedImageData.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(Array(selectedImageData.enumerated()), id: \.offset) { _, data in
+                                    if let uiImage = UIImage(data: data) {
+                                        Image(uiImage: uiImage)
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 84, height: 84)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
                 }
 
                 Section {
@@ -74,6 +90,21 @@ struct CreatePostView: View {
                 selectedPetID = pets.first?.id
             }
         }
+        .onChange(of: selectedItems) { _, newItems in
+            Task {
+                await loadImages(from: newItems)
+            }
+        }
+    }
+
+    private func loadImages(from items: [PhotosPickerItem]) async {
+        var loaded: [Data] = []
+        for item in items {
+            if let data = try? await item.loadTransferable(type: Data.self) {
+                loaded.append(data)
+            }
+        }
+        selectedImageData = loaded
     }
 
     private func savePost() {
@@ -84,7 +115,7 @@ struct CreatePostView: View {
             petName: pet.name.isEmpty ? "Unnamed Pet" : pet.name,
             caption: caption,
             mood: mood,
-            imageSlotCount: imageSlotCount
+            imageDataListJSON: StoredPost.encodeImageDataList(selectedImageData)
         )
 
         modelContext.insert(post)

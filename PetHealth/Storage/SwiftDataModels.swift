@@ -121,7 +121,7 @@ final class StoredPost {
     var petName: String
     var caption: String
     var mood: String
-    var imageSlotCount: Int
+    var imageDataListJSON: String
 
     init(
         id: UUID = UUID(),
@@ -130,7 +130,7 @@ final class StoredPost {
         petName: String = "",
         caption: String,
         mood: String,
-        imageSlotCount: Int = 0
+        imageDataListJSON: String = "[]"
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -138,6 +138,24 @@ final class StoredPost {
         self.petName = petName
         self.caption = caption
         self.mood = mood
-        self.imageSlotCount = imageSlotCount
+        self.imageDataListJSON = imageDataListJSON
+    }
+
+    var imageDataList: [Data] {
+        Self.decodeImageDataList(imageDataListJSON)
+    }
+
+    static func encodeImageDataList(_ values: [Data]) -> String {
+        let base64 = values.map { $0.base64EncodedString() }
+        let data = (try? JSONEncoder().encode(base64)) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "[]"
+    }
+
+    static func decodeImageDataList(_ value: String) -> [Data] {
+        guard let data = value.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return decoded.compactMap { Data(base64Encoded: $0) }
     }
 }
