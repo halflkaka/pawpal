@@ -168,7 +168,10 @@ struct PetProfileView: View {
     private func addPet() {
         let pet = StoredPetProfile(name: "Pet \(draftCounter)", species: "Dog", breed: "", age: "", weight: "", notes: "")
         draftCounter += 1
-        modelContext.insert(pet)
+        withAnimation {
+            modelContext.insert(pet)
+        }
+        try? modelContext.save()
         selectedPetID = pet.id.uuidString
     }
 
