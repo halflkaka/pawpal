@@ -42,19 +42,19 @@ struct PetHealthApp: App {
         }
         .modelContainer(sharedModelContainer)
     }
+}
 
-    private func clearLocalSwiftDataStore() {
-        let fileManager = FileManager.default
-        guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return
-        }
+private func clearLocalSwiftDataStore() {
+    let fileManager = FileManager.default
+    guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        return
+    }
 
-        let defaultStore = appSupport.appendingPathComponent("default.store")
-        let defaultStoreWal = appSupport.appendingPathComponent("default.store-wal")
-        let defaultStoreShm = appSupport.appendingPathComponent("default.store-shm")
+    let defaultStore = appSupport.appendingPathComponent("default.store")
+    let defaultStoreWal = appSupport.appendingPathComponent("default.store-wal")
+    let defaultStoreShm = appSupport.appendingPathComponent("default.store-shm")
 
-        [defaultStore, defaultStoreWal, defaultStoreShm].forEach { url in
-            try? fileManager.removeItem(at: url)
-        }
+    [defaultStore, defaultStoreWal, defaultStoreShm].forEach { url in
+        try? fileManager.removeItem(at: url)
     }
 }
