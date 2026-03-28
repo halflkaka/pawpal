@@ -3,7 +3,7 @@ import SwiftData
 
 struct PetProfileView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \StoredPetProfile.name) private var storedPets: [StoredPetProfile]
+    @Query(sort: \StoredPetProfile.id, order: .reverse) private var storedPets: [StoredPetProfile]
     @AppStorage("selectedPetID") private var selectedPetID = ""
     @State private var showingAddPetSheet = false
 
