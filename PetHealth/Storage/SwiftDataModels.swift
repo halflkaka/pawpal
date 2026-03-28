@@ -4,6 +4,7 @@ import SwiftData
 @Model
 final class StoredPetProfile {
     @Attribute(.unique) var id: UUID
+    var createdAt: Date
     var name: String
     var species: String
     var breed: String
@@ -13,6 +14,7 @@ final class StoredPetProfile {
 
     init(
         id: UUID = UUID(),
+        createdAt: Date = .now,
         name: String,
         species: String,
         breed: String,
@@ -21,6 +23,7 @@ final class StoredPetProfile {
         notes: String
     ) {
         self.id = id
+        self.createdAt = createdAt
         self.name = name
         self.species = species
         self.breed = breed

@@ -3,7 +3,7 @@ import SwiftData
 
 struct PetProfileView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \StoredPetProfile.id, order: .reverse) private var storedPets: [StoredPetProfile]
+    @Query(sort: \StoredPetProfile.createdAt, order: .reverse) private var storedPets: [StoredPetProfile]
     @AppStorage("selectedPetID") private var selectedPetID = ""
     @State private var showingAddPetSheet = false
 
@@ -29,7 +29,7 @@ struct PetProfileView: View {
         .sheet(isPresented: $showingAddPetSheet) {
             AddPetSheet { name, species, breed, age, weight, notes in
                 let pet = StoredPetProfile(
-                    name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Unnamed Pet" : name,
+                    name: name,
                     species: species,
                     breed: breed,
                     age: age,
@@ -41,13 +41,8 @@ struct PetProfileView: View {
                 selectedPetID = pet.id.uuidString
             }
         }
-        .task {
-            if storedPets.isEmpty {
-                let pet = StoredPetProfile(name: "Pet 1", species: "Dog", breed: "", age: "", weight: "", notes: "")
-                modelContext.insert(pet)
-                try? modelContext.save()
-                selectedPetID = pet.id.uuidString
-            } else if selectedPet == nil, let firstPet = storedPets.first {
+        .task(id: storedPets.map(\.id)) {
+            if selectedPet == nil, let firstPet = storedPets.first {
                 selectedPetID = firstPet.id.uuidString
             }
         }
@@ -65,6 +60,7 @@ struct PetProfileView: View {
                     .font(.headline)
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("add-pet-button")
         }
     }
 
@@ -73,46 +69,57 @@ struct PetProfileView: View {
             Text("Your Pets")
                 .font(.headline)
 
-            ForEach(storedPets) { pet in
-                Button {
-                    selectedPetID = pet.id.uuidString
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: iconName(for: pet.species))
-                            .font(.title3)
-                            .frame(width: 38, height: 38)
-                            .background(speciesColor(for: pet).opacity(0.14))
-                            .foregroundStyle(speciesColor(for: pet))
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            if storedPets.isEmpty {
+                ContentUnavailableView(
+                    "No pets yet",
+                    systemImage: "pawprint.circle",
+                    description: Text("Add your first pet to start saving profiles and symptom checks.")
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+            } else {
+                ForEach(storedPets) { pet in
+                    Button {
+                        selectedPetID = pet.id.uuidString
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: iconName(for: pet.species))
+                                .font(.title3)
+                                .frame(width: 38, height: 38)
+                                .background(speciesColor(for: pet).opacity(0.14))
+                                .foregroundStyle(speciesColor(for: pet))
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(displayName(for: pet))
-                                .font(.headline)
-                                .foregroundStyle(.primary)
-                            Text(summaryLine(for: pet))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(displayName(for: pet))
+                                    .font(.headline)
+                                    .foregroundStyle(.primary)
+                                Text(summaryLine(for: pet))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+
+                            if pet.id.uuidString == selectedPetID {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.blue)
+                            }
                         }
-
-                        Spacer()
-
-                        if pet.id.uuidString == selectedPetID {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.blue)
-                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .swipeActions {
-                    if storedPets.count > 1 {
-                        Button(role: .destructive) {
-                            delete(pet)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("pet-row-\(pet.id.uuidString)")
+                    .swipeActions {
+                        if storedPets.count > 1 {
+                            Button(role: .destructive) {
+                                delete(pet)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
                         }
                     }
                 }
@@ -193,7 +200,10 @@ struct PetProfileView: View {
     private func binding(for pet: StoredPetProfile, keyPath: ReferenceWritableKeyPath<StoredPetProfile, String>) -> Binding<String> {
         Binding(
             get: { pet[keyPath: keyPath] },
-            set: { pet[keyPath: keyPath] = $0 }
+            set: {
+                pet[keyPath: keyPath] = $0
+                try? modelContext.save()
+            }
         )
     }
 
@@ -243,11 +253,16 @@ private struct AddPetSheet: View {
 
     let onSave: (String, String, String, String, String, String) -> Void
 
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section("New Pet") {
                     TextField("Name", text: $name)
+                        .accessibilityIdentifier("add-pet-name-field")
                     Picker("Species", selection: $species) {
                         Text("Dog").tag("Dog")
                         Text("Cat").tag("Cat")
@@ -268,9 +283,11 @@ private struct AddPetSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        onSave(name, species, breed, age, weight, notes)
+                        onSave(trimmedName, species, breed, age, weight, notes)
                         dismiss()
                     }
+                    .disabled(trimmedName.isEmpty)
+                    .accessibilityIdentifier("save-pet-button")
                 }
             }
         }

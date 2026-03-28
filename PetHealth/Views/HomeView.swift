@@ -2,10 +2,9 @@ import SwiftUI
 import SwiftData
 
 struct HomeView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: \StoredPetProfile.name) private var storedPets: [StoredPetProfile]
-    @Query(sort: \StoredSymptomCheck.date, order: .reverse) private var storedChecks: [StoredSymptomCheck]
     @AppStorage("selectedPetID") private var selectedPetID = ""
+    @Query(sort: \StoredPetProfile.createdAt, order: .reverse) private var storedPets: [StoredPetProfile]
+    @Query(sort: \StoredSymptomCheck.date, order: .reverse) private var storedChecks: [StoredSymptomCheck]
 
     private var selectedPet: StoredPetProfile? {
         if let match = storedPets.first(where: { $0.id.uuidString == selectedPetID }) {
@@ -35,12 +34,8 @@ struct HomeView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Pet Health")
-        .task {
-            if storedPets.isEmpty {
-                let pet = StoredPetProfile(name: "", species: "Dog", breed: "", age: "", weight: "", notes: "")
-                modelContext.insert(pet)
-                selectedPetID = pet.id.uuidString
-            } else if selectedPet == nil, let firstPet = storedPets.first {
+        .task(id: storedPets.map(\.id)) {
+            if selectedPet == nil, let firstPet = storedPets.first {
                 selectedPetID = firstPet.id.uuidString
             }
         }
