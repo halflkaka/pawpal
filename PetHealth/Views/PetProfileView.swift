@@ -5,7 +5,7 @@ struct PetProfileView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \StoredPetProfile.name) private var storedPets: [StoredPetProfile]
     @AppStorage("selectedPetID") private var selectedPetID = ""
-    @State private var draftCounter = 1
+    @State private var showingAddPetSheet = false
 
     private var selectedPet: StoredPetProfile? {
         if let match = storedPets.first(where: { $0.id.uuidString == selectedPetID }) {
@@ -26,15 +26,30 @@ struct PetProfileView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Pets")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingAddPetSheet) {
+            AddPetSheet { name, species, breed, age, weight, notes in
+                let pet = StoredPetProfile(
+                    name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Unnamed Pet" : name,
+                    species: species,
+                    breed: breed,
+                    age: age,
+                    weight: weight,
+                    notes: notes
+                )
+                modelContext.insert(pet)
+                try? modelContext.save()
+                selectedPetID = pet.id.uuidString
+            }
+        }
         .task {
             if storedPets.isEmpty {
                 let pet = StoredPetProfile(name: "Pet 1", species: "Dog", breed: "", age: "", weight: "", notes: "")
                 modelContext.insert(pet)
+                try? modelContext.save()
                 selectedPetID = pet.id.uuidString
             } else if selectedPet == nil, let firstPet = storedPets.first {
                 selectedPetID = firstPet.id.uuidString
             }
-            draftCounter = max(storedPets.count + 1, draftCounter)
         }
     }
 
@@ -44,7 +59,7 @@ struct PetProfileView: View {
                 .font(.title2.bold())
             Spacer()
             Button {
-                addPet()
+                showingAddPetSheet = true
             } label: {
                 Label("Add Pet", systemImage: "plus.circle.fill")
                     .font(.headline)
@@ -165,20 +180,11 @@ struct PetProfileView: View {
         }
     }
 
-    private func addPet() {
-        let pet = StoredPetProfile(name: "Pet \(draftCounter)", species: "Dog", breed: "", age: "", weight: "", notes: "")
-        draftCounter += 1
-        withAnimation {
-            modelContext.insert(pet)
-        }
-        try? modelContext.save()
-        selectedPetID = pet.id.uuidString
-    }
-
     private func delete(_ pet: StoredPetProfile) {
         let wasSelected = pet.id.uuidString == selectedPetID
         let nextSelectedID = storedPets.first(where: { $0.id != pet.id })?.id.uuidString ?? ""
         modelContext.delete(pet)
+        try? modelContext.save()
         if wasSelected {
             selectedPetID = nextSelectedID
         }
@@ -222,5 +228,51 @@ struct PetProfileView: View {
     private func fieldLabel(_ text: String) -> some View {
         Text(text)
             .font(.subheadline.weight(.semibold))
+    }
+}
+
+private struct AddPetSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name = ""
+    @State private var species = "Dog"
+    @State private var breed = ""
+    @State private var age = ""
+    @State private var weight = ""
+    @State private var notes = ""
+
+    let onSave: (String, String, String, String, String, String) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("New Pet") {
+                    TextField("Name", text: $name)
+                    Picker("Species", selection: $species) {
+                        Text("Dog").tag("Dog")
+                        Text("Cat").tag("Cat")
+                        Text("Other").tag("Other")
+                    }
+                    TextField("Breed", text: $breed)
+                    TextField("Age", text: $age)
+                    TextField("Weight", text: $weight)
+                    TextField("Notes", text: $notes, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+            }
+            .navigationTitle("Add Pet")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(name, species, breed, age, weight, notes)
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
