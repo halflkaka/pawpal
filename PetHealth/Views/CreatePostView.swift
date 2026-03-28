@@ -11,7 +11,6 @@ struct CreatePostView: View {
     @State private var mood = ""
     @State private var selectedItems: [PhotosPickerItem] = []
     @State private var selectedImageData: [Data] = []
-    @State private var didSave = false
 
     var body: some View {
         List {
@@ -76,10 +75,10 @@ struct CreatePostView: View {
                 }
 
                 Section {
-                    Button(didSave ? "Saved" : "Post") {
+                    Button("Post") {
                         savePost()
                     }
-                    .disabled(pets.isEmpty || caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || didSave)
+                    .disabled(pets.isEmpty || caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
@@ -120,6 +119,10 @@ struct CreatePostView: View {
 
         modelContext.insert(post)
         try? modelContext.save()
-        didSave = true
+
+        caption = ""
+        mood = ""
+        selectedItems = []
+        selectedImageData = []
     }
 }

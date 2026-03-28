@@ -11,6 +11,7 @@ final class StoredPetProfile {
     var age: String
     var weight: String
     var notes: String
+    var followingPetIDsJSON: String
 
     init(
         id: UUID = UUID(),
@@ -20,7 +21,8 @@ final class StoredPetProfile {
         breed: String,
         age: String,
         weight: String,
-        notes: String
+        notes: String,
+        followingPetIDsJSON: String = "[]"
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -30,6 +32,15 @@ final class StoredPetProfile {
         self.age = age
         self.weight = weight
         self.notes = notes
+        self.followingPetIDsJSON = followingPetIDsJSON
+    }
+
+    var followingPetIDs: [UUID] {
+        Self.decodeUUIDList(followingPetIDsJSON)
+    }
+
+    func setFollowingPetIDs(_ values: [UUID]) {
+        followingPetIDsJSON = Self.encodeUUIDList(values)
     }
 
     func toPetProfile() -> PetProfile {
@@ -42,6 +53,20 @@ final class StoredPetProfile {
             weight: weight,
             notes: notes
         )
+    }
+
+    static func encodeUUIDList(_ values: [UUID]) -> String {
+        let strings = values.map { $0.uuidString }
+        let data = (try? JSONEncoder().encode(strings)) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "[]"
+    }
+
+    static func decodeUUIDList(_ value: String) -> [UUID] {
+        guard let data = value.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return decoded.compactMap(UUID.init(uuidString:))
     }
 }
 

@@ -4,6 +4,7 @@ import SwiftData
 struct PetProfileView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \StoredPetProfile.createdAt, order: .reverse) private var storedPets: [StoredPetProfile]
+    @Query(sort: \StoredPost.createdAt, order: .reverse) private var posts: [StoredPost]
     @AppStorage("selectedPetID") private var selectedPetID = ""
     @State private var showingAddPetSheet = false
 
@@ -19,6 +20,8 @@ struct PetProfileView: View {
             VStack(alignment: .leading, spacing: 18) {
                 topBar
                 petListSection
+                statsSection
+                followingSection
                 editorSection
             }
             .padding(20)
@@ -29,7 +32,7 @@ struct PetProfileView: View {
         .sheet(isPresented: $showingAddPetSheet) {
             AddPetSheet { name, species, breed, age, weight, notes in
                 let pet = StoredPetProfile(
-                    name: name,
+                    name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Unnamed Pet" : name,
                     species: species,
                     breed: breed,
                     age: age,
@@ -41,8 +44,8 @@ struct PetProfileView: View {
                 selectedPetID = pet.id.uuidString
             }
         }
-        .task(id: storedPets.map(\.id)) {
-            if selectedPet == nil, let firstPet = storedPets.first {
+        .task {
+            if storedPets.isEmpty == false, selectedPet == nil, let firstPet = storedPets.first {
                 selectedPetID = firstPet.id.uuidString
             }
         }
@@ -60,7 +63,6 @@ struct PetProfileView: View {
                     .font(.headline)
             }
             .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("add-pet-button")
         }
     }
 
@@ -70,13 +72,12 @@ struct PetProfileView: View {
                 .font(.headline)
 
             if storedPets.isEmpty {
-                ContentUnavailableView(
-                    "No pets yet",
-                    systemImage: "pawprint.circle",
-                    description: Text("Add your first pet to start saving profiles and symptom checks.")
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 24)
+                Text("No pets yet. Add one to get started.")
+                    .foregroundStyle(.secondary)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             } else {
                 ForEach(storedPets) { pet in
                     Button {
@@ -112,16 +113,53 @@ struct PetProfileView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("pet-row-\(pet.id.uuidString)")
-                    .swipeActions {
-                        if storedPets.count > 1 {
-                            Button(role: .destructive) {
-                                delete(pet)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statsSection: some View {
+        if let pet = selectedPet {
+            let postCount = posts.filter { $0.petID == pet.id }.count
+            let following = pet.followingPetIDs.count
+            let followers = storedPets.filter { $0.followingPetIDs.contains(pet.id) }.count
+
+            HStack(spacing: 12) {
+                statCard(title: "Posts", value: postCount)
+                statCard(title: "Following", value: following)
+                statCard(title: "Followers", value: followers)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var followingSection: some View {
+        if let pet = selectedPet {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Follow Other Pets")
+                    .font(.headline)
+
+                ForEach(storedPets.filter { $0.id != pet.id }) { otherPet in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(displayName(for: otherPet))
+                                .font(.headline)
+                            Text(summaryLine(for: otherPet))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
+
+                        Spacer()
+
+                        Button(isFollowing(otherPet, by: pet) ? "Following" : "Follow") {
+                            toggleFollow(otherPet, by: pet)
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
+                    .padding(16)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
             }
         }
@@ -138,6 +176,7 @@ struct PetProfileView: View {
                     fieldLabel("Name")
                     TextField("Pet name", text: binding(for: pet, keyPath: \.name))
                         .textFieldStyle(.roundedBorder)
+                        .onChange(of: pet.name) { _, _ in try? modelContext.save() }
 
                     fieldLabel("Species")
                     Picker("Species", selection: binding(for: pet, keyPath: \.species)) {
@@ -146,22 +185,26 @@ struct PetProfileView: View {
                         Text("Other").tag("Other")
                     }
                     .pickerStyle(.segmented)
+                    .onChange(of: pet.species) { _, _ in try? modelContext.save() }
 
                     fieldLabel("Breed")
                     TextField("Breed", text: binding(for: pet, keyPath: \.breed))
                         .textFieldStyle(.roundedBorder)
+                        .onChange(of: pet.breed) { _, _ in try? modelContext.save() }
 
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 8) {
                             fieldLabel("Age")
                             TextField("Age", text: binding(for: pet, keyPath: \.age))
                                 .textFieldStyle(.roundedBorder)
+                                .onChange(of: pet.age) { _, _ in try? modelContext.save() }
                         }
 
                         VStack(alignment: .leading, spacing: 8) {
                             fieldLabel("Weight")
                             TextField("Weight", text: binding(for: pet, keyPath: \.weight))
                                 .textFieldStyle(.roundedBorder)
+                                .onChange(of: pet.weight) { _, _ in try? modelContext.save() }
                         }
                     }
 
@@ -169,6 +212,7 @@ struct PetProfileView: View {
                     TextField("Allergies, meds, chronic issues", text: binding(for: pet, keyPath: \.notes), axis: .vertical)
                         .lineLimit(4...8)
                         .textFieldStyle(.roundedBorder)
+                        .onChange(of: pet.notes) { _, _ in try? modelContext.save() }
 
                     if storedPets.count > 1 {
                         Button(role: .destructive) {
@@ -187,6 +231,35 @@ struct PetProfileView: View {
         }
     }
 
+    private func statCard(title: String, value: Int) -> some View {
+        VStack(spacing: 6) {
+            Text("\(value)")
+                .font(.title3.bold())
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func toggleFollow(_ target: StoredPetProfile, by source: StoredPetProfile) {
+        var following = source.followingPetIDs
+        if let idx = following.firstIndex(of: target.id) {
+            following.remove(at: idx)
+        } else {
+            following.append(target.id)
+        }
+        source.setFollowingPetIDs(following)
+        try? modelContext.save()
+    }
+
+    private func isFollowing(_ target: StoredPetProfile, by source: StoredPetProfile) -> Bool {
+        source.followingPetIDs.contains(target.id)
+    }
+
     private func delete(_ pet: StoredPetProfile) {
         let wasSelected = pet.id.uuidString == selectedPetID
         let nextSelectedID = storedPets.first(where: { $0.id != pet.id })?.id.uuidString ?? ""
@@ -200,10 +273,7 @@ struct PetProfileView: View {
     private func binding(for pet: StoredPetProfile, keyPath: ReferenceWritableKeyPath<StoredPetProfile, String>) -> Binding<String> {
         Binding(
             get: { pet[keyPath: keyPath] },
-            set: {
-                pet[keyPath: keyPath] = $0
-                try? modelContext.save()
-            }
+            set: { pet[keyPath: keyPath] = $0 }
         )
     }
 
@@ -253,16 +323,11 @@ private struct AddPetSheet: View {
 
     let onSave: (String, String, String, String, String, String) -> Void
 
-    private var trimmedName: String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     var body: some View {
         NavigationStack {
             Form {
                 Section("New Pet") {
                     TextField("Name", text: $name)
-                        .accessibilityIdentifier("add-pet-name-field")
                     Picker("Species", selection: $species) {
                         Text("Dog").tag("Dog")
                         Text("Cat").tag("Cat")
@@ -283,11 +348,10 @@ private struct AddPetSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        onSave(trimmedName, species, breed, age, weight, notes)
+                        onSave(name, species, breed, age, weight, notes)
                         dismiss()
                     }
-                    .disabled(trimmedName.isEmpty)
-                    .accessibilityIdentifier("save-pet-button")
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
