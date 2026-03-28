@@ -11,84 +11,59 @@ struct CreatePostView: View {
     @State private var didSave = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                formCard
-                saveButton
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Share a moment")
+                        .font(.headline)
+                    Text("Write a small update like a pet朋友圈 post.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
-            .padding(20)
+
+            if pets.isEmpty {
+                Section {
+                    Text("Add a pet first before posting.")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section("Pet") {
+                    Picker("Pet", selection: Binding(
+                        get: { selectedPetID ?? pets.first?.id },
+                        set: { selectedPetID = $0 }
+                    )) {
+                        ForEach(pets) { pet in
+                            Text(pet.name.isEmpty ? "Unnamed Pet" : pet.name)
+                                .tag(Optional(pet.id))
+                        }
+                    }
+                }
+
+                Section("Moment") {
+                    TextField("What is your pet up to today?", text: $caption, axis: .vertical)
+                        .lineLimit(5...10)
+                }
+
+                Section("Mood") {
+                    TextField("Happy / Sleepy / Zoomies", text: $mood)
+                }
+
+                Section {
+                    Button(didSave ? "Saved" : "Post") {
+                        savePost()
+                    }
+                    .disabled(pets.isEmpty || caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || didSave)
+                }
+            }
         }
-        .background(Color(.systemGroupedBackground))
-        .navigationTitle("New Post")
+        .navigationTitle("Post")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             if selectedPetID == nil {
                 selectedPetID = pets.first?.id
             }
         }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Share a pet moment")
-                .font(.title2.bold())
-            Text("Keep it simple for now: pick a pet, add a caption, and save locally.")
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var formCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if pets.isEmpty {
-                Text("Add a pet first before creating a post.")
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Pet")
-                    .font(.headline)
-
-                Picker("Pet", selection: Binding(
-                    get: { selectedPetID ?? pets.first?.id },
-                    set: { selectedPetID = $0 }
-                )) {
-                    ForEach(pets) { pet in
-                        Text(pet.name.isEmpty ? "Unnamed Pet" : pet.name)
-                            .tag(Optional(pet.id))
-                    }
-                }
-                .pickerStyle(.menu)
-
-                Text("Caption")
-                    .font(.headline)
-                TextField("Today Mochi finally sat still for a photo…", text: $caption, axis: .vertical)
-                    .lineLimit(4...8)
-                    .textFieldStyle(.roundedBorder)
-
-                Text("Mood")
-                    .font(.headline)
-                TextField("Happy / Sleepy / Zoomies", text: $mood)
-                    .textFieldStyle(.roundedBorder)
-            }
-        }
-        .padding(18)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-
-    private var saveButton: some View {
-        Button {
-            savePost()
-        } label: {
-            HStack {
-                Spacer()
-                Text(didSave ? "Saved" : "Save Post")
-                    .font(.headline)
-                Spacer()
-            }
-            .padding()
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(pets.isEmpty || caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || didSave)
     }
 
     private func savePost() {

@@ -5,51 +5,79 @@ struct FeedView: View {
     @Query(sort: \StoredPost.createdAt, order: .reverse) private var posts: [StoredPost]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
+        List {
+            Section {
+                headerRow
+            }
+            .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 8, trailing: 16))
+            .listRowBackground(Color.clear)
 
-                if posts.isEmpty {
-                    ContentUnavailableView(
-                        "No Posts Yet",
-                        systemImage: "photo.on.rectangle.angled",
-                        description: Text("Create your first pet post to start the feed.")
-                    )
-                    .padding(.top, 60)
-                } else {
-                    ForEach(posts) { post in
-                        postCard(post)
+            if posts.isEmpty {
+                Section {
+                    VStack(alignment: .center, spacing: 12) {
+                        Image(systemName: "pawprint.circle")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.secondary)
+                        Text("No moments yet")
+                            .font(.headline)
+                        Text("Post a small update about your pet and it will appear here.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 30)
+                }
+            } else {
+                ForEach(posts) { post in
+                    momentRow(post)
+                        .listRowInsets(EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
                 }
             }
-            .padding(20)
         }
-        .background(Color(.systemGroupedBackground))
-        .navigationTitle("Feed")
+        .listStyle(.plain)
+        .navigationTitle("Moments")
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Pet Feed")
-                .font(.title2.bold())
-            Text("A local-first space for pet updates, memories, and little moments.")
-                .foregroundStyle(.secondary)
+    private var headerRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Circle()
+                .fill(Color.orange.opacity(0.18))
+                .frame(width: 48, height: 48)
+                .overlay {
+                    Image(systemName: "pawprint.fill")
+                        .foregroundStyle(.orange)
+                }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Pet Moments")
+                    .font(.headline)
+                Text("A simple local timeline for your pets.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
-    private func postCard(_ post: StoredPost) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "pawprint.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(post.petName.isEmpty ? "Pet Post" : post.petName)
+    private func momentRow(_ post: StoredPost) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Circle()
+                    .fill(Color.blue.opacity(0.14))
+                    .frame(width: 42, height: 42)
+                    .overlay {
+                        Image(systemName: "pawprint.fill")
+                            .foregroundStyle(.blue)
+                    }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(post.petName.isEmpty ? "Pet" : post.petName)
                         .font(.headline)
                     Text(post.createdAt.formatted(date: .abbreviated, time: .shortened))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
                 Spacer()
             }
 
@@ -57,18 +85,11 @@ struct FeedView: View {
                 .font(.body)
                 .foregroundStyle(.primary)
 
-            if !post.mood.isEmpty {
+            if !post.mood.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(post.mood)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.orange.opacity(0.14))
-                    .clipShape(Capsule())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }

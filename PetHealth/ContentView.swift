@@ -2,14 +2,14 @@ import SwiftUI
 
 struct ContentView: View {
     enum AppTab: Hashable {
-        case feed
+        case moments
         case post
         case pets
         case care
         case vets
     }
 
-    @State private var selectedTab: AppTab = .feed
+    @State private var selectedTab: AppTab = .moments
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -17,15 +17,15 @@ struct ContentView: View {
                 FeedView()
             }
             .tabItem {
-                Label("Feed", systemImage: "house.fill")
+                Label("Moments", systemImage: "house.fill")
             }
-            .tag(AppTab.feed)
+            .tag(AppTab.moments)
 
             NavigationStack {
                 CreatePostView()
             }
             .tabItem {
-                Label("Post", systemImage: "plus.app.fill")
+                Label("Post", systemImage: "square.and.pencil")
             }
             .tag(AppTab.post)
 
