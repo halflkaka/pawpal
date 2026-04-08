@@ -57,9 +57,9 @@ struct AuthView: View {
     private var authCard: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(isRegisterMode ? "Create your account" : "Welcome back")
+                Text(isRegisterMode ? "Create your account" : "Sign in")
                     .font(.title3.bold())
-                Text(isRegisterMode ? "Start posting pet moments and building your pet space." : "Sign in to continue to your pets, moments, and feed.")
+                Text(isRegisterMode ? "Start posting pet moments and building your pet space." : "Continue to your pets, moments, and feed.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
