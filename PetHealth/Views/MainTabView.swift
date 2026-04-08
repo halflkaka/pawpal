@@ -31,7 +31,9 @@ struct MainTabView: View {
             .tag(AppTab.post)
 
             NavigationStack {
-                PetProfileView()
+                if let user = authManager.currentUser {
+                    RemotePetsView(user: user)
+                }
             }
             .tabItem {
                 Label("Pets", systemImage: "pawprint.fill")
