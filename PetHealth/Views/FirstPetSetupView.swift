@@ -106,6 +106,7 @@ struct FirstPetSetupView: View {
     private func save() async {
         guard canSave else { return }
         isSaving = true
+        petsService.errorMessage = nil
         defer { isSaving = false }
 
         await petsService.addPet(
@@ -118,9 +119,16 @@ struct FirstPetSetupView: View {
             notes: notes
         )
 
-        guard let pet = petsService.pets.first else { return }
+        await petsService.loadPets(for: user.id)
+
+        guard let pet = petsService.pets.first else {
+            if petsService.errorMessage == nil {
+                petsService.errorMessage = "Could not load the pet after saving. Please try again."
+            }
+            return
+        }
+
         onComplete(pet)
-        dismiss()
     }
 
     private func row<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
