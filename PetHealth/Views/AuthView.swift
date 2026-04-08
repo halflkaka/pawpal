@@ -9,119 +9,111 @@ struct AuthView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                LinearGradient(
-                    colors: [Color.orange.opacity(0.16), Color.pink.opacity(0.10), Color.white],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                Color(.systemGroupedBackground)
+                    .ignoresSafeArea()
 
-                ScrollView {
-                    VStack(spacing: 28) {
-                        Spacer(minLength: 40)
+                VStack(spacing: 0) {
+                    Spacer(minLength: 32)
 
-                        heroSection
-                        authCard
+                    VStack(spacing: 14) {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color(.secondarySystemBackground))
+                            .frame(width: 72, height: 72)
+                            .overlay {
+                                Image(systemName: "pawprint.fill")
+                                    .font(.system(size: 28))
+                                    .foregroundStyle(.gray)
+                            }
 
-                        Spacer(minLength: 20)
+                        Text("PetHealth")
+                            .font(.system(size: 28, weight: .semibold))
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 20)
+                    .padding(.bottom, 28)
+
+                    VStack(spacing: 0) {
+                        inputRow(title: "Email") {
+                            TextField("name@example.com", text: $email)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                        }
+
+                        Divider().padding(.leading, 16)
+
+                        inputRow(title: "Password") {
+                            SecureField("Enter password", text: $password)
+                        }
+                    }
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(.horizontal, 16)
+
+                    if let errorMessage = authManager.errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 10)
+                    }
+
+                    Button {
+                        Task {
+                            if isRegisterMode {
+                                await authManager.register(email: email, password: password)
+                            } else {
+                                await authManager.signIn(email: email, password: password)
+                            }
+                        }
+                    } label: {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(buttonEnabled ? Color.green : Color(.tertiarySystemFill))
+                                .frame(height: 50)
+
+                            if authManager.isLoading {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Text(isRegisterMode ? "Create Account" : "Sign In")
+                                    .font(.system(size: 17, weight: .medium))
+                                    .foregroundColor(buttonEnabled ? .white : .secondary)
+                            }
+                        }
+                    }
+                    .disabled(!buttonEnabled || authManager.isLoading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 20)
+
+                    Button(isRegisterMode ? "Sign In" : "Create Account") {
+                        isRegisterMode.toggle()
+                        authManager.errorMessage = nil
+                    }
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 18)
+
+                    Spacer()
                 }
             }
             .navigationBarHidden(true)
         }
     }
 
-    private var heroSection: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(Color.orange.opacity(0.16))
-                    .frame(width: 92, height: 92)
-                Image(systemName: "pawprint.fill")
-                    .font(.system(size: 34))
-                    .foregroundStyle(.orange)
-            }
-
-            Text("PetHealth")
-                .font(.system(size: 34, weight: .bold))
-        }
+    private var buttonEnabled: Bool {
+        !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty
     }
 
-    private var authCard: some View {
-        VStack(alignment: .leading, spacing: 20) {
-
-            VStack(spacing: 14) {
-                field(title: "Email") {
-                    TextField("name@example.com", text: $email)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
-
-                field(title: "Password") {
-                    SecureField("Enter password", text: $password)
-                }
-            }
-
-            if let errorMessage = authManager.errorMessage {
-                Text(errorMessage)
-                    .font(.subheadline)
-                    .foregroundStyle(.red)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.red.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-
-            Button {
-                Task {
-                    if isRegisterMode {
-                        await authManager.register(email: email, password: password)
-                    } else {
-                        await authManager.signIn(email: email, password: password)
-                    }
-                }
-            } label: {
-                HStack {
-                    Spacer()
-                    if authManager.isLoading {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Text(isRegisterMode ? "Create Account" : "Sign In")
-                            .font(.headline)
-                    }
-                    Spacer()
-                }
-                .padding(.vertical, 14)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.orange)
-            .disabled(email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty || authManager.isLoading)
-
-            Button(isRegisterMode ? "Already have an account? Sign In" : "New here? Create an account") {
-                isRegisterMode.toggle()
-            }
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
-        }
-        .padding(22)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .shadow(color: Color.black.opacity(0.04), radius: 18, x: 0, y: 8)
-    }
-
-    private func field<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func inputRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 16) {
             Text(title)
-                .font(.subheadline.weight(.semibold))
+                .font(.system(size: 16))
+                .foregroundStyle(.secondary)
+                .frame(width: 78, alignment: .leading)
+
             content()
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .font(.system(size: 16))
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
     }
 }

@@ -7,6 +7,7 @@ struct MainTabView: View {
         case pets
         case care
         case vets
+        case me
     }
 
     @State private var selectedTab: AppTab = .moments
@@ -55,14 +56,16 @@ struct MainTabView: View {
                 Label("Vets", systemImage: "cross.case.fill")
             }
             .tag(AppTab.vets)
-        }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Sign Out") {
-                    authManager.signOut()
+
+            NavigationStack {
+                if let user = authManager.currentUser {
+                    ProfileView(user: user, authManager: authManager)
                 }
-                .font(.subheadline)
             }
+            .tabItem {
+                Label("Me", systemImage: "person.fill")
+            }
+            .tag(AppTab.me)
         }
     }
 }
