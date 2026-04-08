@@ -86,7 +86,7 @@ struct AuthView: View {
 
                     Button(isRegisterMode ? "Sign In" : "Create Account") {
                         isRegisterMode.toggle()
-                        authManager.errorMessage = nil
+                        authManager.clearError()
                     }
                     .font(.system(size: 16))
                     .foregroundStyle(.secondary)
@@ -97,6 +97,8 @@ struct AuthView: View {
             }
             .navigationBarHidden(true)
         }
+        .onChange(of: email) { _, _ in authManager.clearError() }
+        .onChange(of: password) { _, _ in authManager.clearError() }
     }
 
     private var buttonEnabled: Bool {

@@ -8,7 +8,9 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if authManager.currentUser == nil {
+            if authManager.isRestoringSession {
+                launchScreen
+            } else if authManager.currentUser == nil {
                 AuthView(authManager: authManager)
             } else if shouldShowFirstPetSetup, let user = authManager.currentUser {
                 FirstPetSetupView(user: user) { pet in
@@ -38,6 +40,27 @@ struct ContentView: View {
     private var shouldShowFirstPetSetup: Bool {
         guard authManager.currentUser != nil, hasCheckedPets else { return false }
         return petsService.pets.isEmpty
+    }
+
+    private var launchScreen: some View {
+        ZStack {
+            Color(.systemGroupedBackground)
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+                    .frame(width: 72, height: 72)
+                    .overlay {
+                        Image(systemName: "pawprint.fill")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.gray)
+                    }
+
+                ProgressView()
+                    .tint(.secondary)
+            }
+        }
     }
 }
 

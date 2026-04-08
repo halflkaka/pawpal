@@ -6,6 +6,7 @@ import Observation
 final class AuthManager {
     var currentUser: AppUser?
     var isLoading = false
+    var isRestoringSession = false
     var errorMessage: String?
 
     private let authService: AuthService
@@ -15,9 +16,9 @@ final class AuthManager {
     }
 
     func restoreSession() async {
-        isLoading = true
+        isRestoringSession = true
         errorMessage = nil
-        defer { isLoading = false }
+        defer { isRestoringSession = false }
 
         currentUser = try? await authService.restoreSession()
     }
@@ -44,6 +45,10 @@ final class AuthManager {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func clearError() {
+        errorMessage = nil
     }
 
     func signOut() {

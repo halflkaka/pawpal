@@ -4,7 +4,6 @@ struct FirstPetSetupView: View {
     let user: AppUser
     let onComplete: (RemotePet) -> Void
 
-    @Environment(\.dismiss) private var dismiss
     @StateObject private var petsService = PetsService()
     @State private var name = ""
     @State private var species = "Dog"
@@ -30,6 +29,10 @@ struct FirstPetSetupView: View {
 
                         Text("Create your first pet")
                             .font(.system(size: 24, weight: .semibold))
+
+                        Text("This will be your active pet.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.top, 32)
                     .padding(.bottom, 28)
