@@ -19,11 +19,7 @@ final class AuthManager {
         errorMessage = nil
         defer { isLoading = false }
 
-        do {
-            currentUser = try await authService.restoreSession()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        currentUser = try? await authService.restoreSession()
     }
 
     func signIn(email: String, password: String) async {
