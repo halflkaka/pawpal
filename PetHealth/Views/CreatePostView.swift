@@ -5,6 +5,7 @@ import SwiftData
 struct CreatePostView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \StoredPetProfile.createdAt, order: .reverse) private var pets: [StoredPetProfile]
+    @AppStorage("activePetID") private var activePetID = ""
 
     @State private var selectedPetID: UUID?
     @State private var caption = ""
@@ -54,13 +55,20 @@ struct CreatePostView: View {
         .navigationTitle("Post")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            if selectedPetID == nil {
+            if let activeID = UUID(uuidString: activePetID), pets.contains(where: { $0.id == activeID }) {
+                selectedPetID = activeID
+            } else if selectedPetID == nil {
                 selectedPetID = pets.first?.id
             }
         }
         .onChange(of: selectedItems) { _, newItems in
             Task {
                 await loadImages(from: newItems)
+            }
+        }
+        .onChange(of: selectedPetID) { _, newValue in
+            if let newValue {
+                activePetID = newValue.uuidString
             }
         }
     }
@@ -173,6 +181,7 @@ struct CreatePostView: View {
         modelContext.insert(post)
         try? modelContext.save()
 
+        activePetID = pet.id.uuidString
         caption = ""
         mood = ""
         selectedItems = []
