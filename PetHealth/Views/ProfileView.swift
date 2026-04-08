@@ -167,14 +167,8 @@ struct ProfileView: View {
                     }
                 }
 
-                let detail = [pet.species, pet.breed, pet.age]
-                    .compactMap { $0 }
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " · ")
-
-                if !detail.isEmpty {
-                    Text(detail)
+                if !petDetail(for: pet).isEmpty {
+                    Text(petDetail(for: pet))
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
@@ -266,6 +260,14 @@ struct ProfileView: View {
         case "other": return "pawprint.circle.fill"
         default: return "dog.fill"
         }
+    }
+
+    private func petDetail(for pet: RemotePet) -> String {
+        [pet.species, pet.breed, pet.age]
+            .compactMap { $0 }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
     }
 
     private var fallbackName: String {
