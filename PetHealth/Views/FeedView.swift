@@ -5,69 +5,80 @@ struct FeedView: View {
     @Query(sort: \StoredPost.createdAt, order: .reverse) private var posts: [StoredPost]
 
     var body: some View {
-        List {
-            Section {
-                headerRow
-            }
-            .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 8, trailing: 16))
-            .listRowBackground(Color.clear)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                topIntro
 
-            if posts.isEmpty {
-                Section {
-                    VStack(alignment: .center, spacing: 12) {
-                        Image(systemName: "pawprint.circle")
-                            .font(.system(size: 36))
-                            .foregroundStyle(.secondary)
-                        Text("No moments yet")
-                            .font(.headline)
-                        Text("Post a small update about your pet and it will appear here.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
+                if posts.isEmpty {
+                    emptyState
+                } else {
+                    LazyVStack(spacing: 18) {
+                        ForEach(posts) { post in
+                            momentCard(post)
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 30)
-                }
-            } else {
-                ForEach(posts) { post in
-                    momentRow(post)
-                        .listRowInsets(EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
                 }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 28)
         }
-        .listStyle(.plain)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Moments")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var headerRow: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Circle()
-                .fill(Color.orange.opacity(0.18))
-                .frame(width: 48, height: 48)
-                .overlay {
-                    Image(systemName: "pawprint.fill")
-                        .foregroundStyle(.orange)
-                }
+    private var topIntro: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Moments")
+                .font(.system(size: 34, weight: .bold))
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Pet Moments")
-                    .font(.headline)
-                Text("A simple local timeline for your pets.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+            Text("Small daily notes, photos, and quiet updates from pet life.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(24)
+        .background(
+            LinearGradient(
+                colors: [Color.orange.opacity(0.16), Color.pink.opacity(0.08), Color.white],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
     }
 
-    private func momentRow(_ post: StoredPost) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 30))
+                .foregroundStyle(.secondary)
+
+            Text("No moments yet")
+                .font(.headline)
+
+            Text("Your pet’s photos and daily updates will appear here.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 56)
+        .padding(.horizontal, 24)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func momentCard(_ post: StoredPost) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
                 Circle()
-                    .fill(Color.blue.opacity(0.14))
-                    .frame(width: 42, height: 42)
+                    .fill(Color.orange.opacity(0.16))
+                    .frame(width: 46, height: 46)
                     .overlay {
                         Image(systemName: "pawprint.fill")
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(.orange)
                     }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -81,21 +92,24 @@ struct FeedView: View {
                 Spacer()
             }
 
-            Text(post.caption)
-                .font(.body)
-                .foregroundStyle(.primary)
+            if !post.caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(post.caption)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .lineSpacing(4)
+            }
 
             let images = post.imageDataList
             if !images.isEmpty {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     ForEach(Array(images.enumerated()), id: \.offset) { _, data in
                         if let uiImage = UIImage(data: data) {
                             Image(uiImage: uiImage)
                                 .resizable()
                                 .scaledToFill()
-                                .frame(height: 88)
+                                .frame(height: 168)
                                 .frame(maxWidth: .infinity)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                         }
                     }
                 }
@@ -103,9 +117,17 @@ struct FeedView: View {
 
             if !post.mood.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(post.mood)
-                    .font(.caption)
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.04))
+                    .clipShape(Capsule())
             }
         }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }
