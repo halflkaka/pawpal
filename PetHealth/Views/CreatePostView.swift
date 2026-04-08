@@ -14,20 +14,41 @@ struct CreatePostView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                introCard
-
+            VStack(spacing: 0) {
                 if pets.isEmpty {
-                    emptyPetState
+                    VStack(spacing: 10) {
+                        Image(systemName: "pawprint.circle")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.secondary)
+                        Text("Add a pet first")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 120)
                 } else {
-                    composeCard
-                    photoCard
+                    VStack(spacing: 0) {
+                        petSelectorRow
+                        Divider().padding(.leading, 16)
+                        textComposer
+                        if !selectedImageData.isEmpty {
+                            Divider().padding(.leading, 16)
+                            imagePreviewSection
+                        }
+                    }
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+
+                    photoActionRow
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+
                     postButton
+                        .padding(.horizontal, 16)
+                        .padding(.top, 24)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 28)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Post")
@@ -44,148 +65,87 @@ struct CreatePostView: View {
         }
     }
 
-    private var introCard: some View {
-        HStack(spacing: 14) {
-            Circle()
-                .fill(Color.orange.opacity(0.14))
-                .frame(width: 54, height: 54)
-                .overlay {
-                    Image(systemName: "square.and.pencil")
-                        .foregroundStyle(.orange)
-                }
+    private var petSelectorRow: some View {
+        HStack(spacing: 12) {
+            Text("Pet")
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
 
-            Text("New moment")
-                .font(.system(size: 28, weight: .bold))
+            Spacer()
+
+            Picker("Pet", selection: Binding(
+                get: { selectedPetID ?? pets.first?.id },
+                set: { selectedPetID = $0 }
+            )) {
+                ForEach(pets) { pet in
+                    Text(pet.name.isEmpty ? "Unnamed Pet" : pet.name)
+                        .tag(Optional(pet.id))
+                }
+            }
+            .pickerStyle(.menu)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+    }
+
+    private var textComposer: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Share something...", text: $caption, axis: .vertical)
+                .lineLimit(8...14)
+                .font(.system(size: 17))
+
+            TextField("Mood", text: $mood)
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var imagePreviewSection: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(selectedImageData.enumerated()), id: \.offset) { _, data in
+                    if let uiImage = UIImage(data: data) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 92, height: 92)
+                            .clipped()
+                    }
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    private var photoActionRow: some View {
+        HStack {
+            PhotosPicker(selection: $selectedItems, maxSelectionCount: 9, matching: .images) {
+                HStack(spacing: 8) {
+                    Image(systemName: "photo")
+                    Text("Photos")
+                }
+                .font(.system(size: 15))
+                .foregroundStyle(.primary)
+            }
 
             Spacer()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .background(
-            LinearGradient(
-                colors: [Color.yellow.opacity(0.14), Color.orange.opacity(0.10), Color.white],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-    }
-
-    private var emptyPetState: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Add a pet first")
-                .font(.headline)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-    }
-
-    private var composeCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Pet")
-                    .font(.subheadline.weight(.semibold))
-
-                Picker("Pet", selection: Binding(
-                    get: { selectedPetID ?? pets.first?.id },
-                    set: { selectedPetID = $0 }
-                )) {
-                    ForEach(pets) { pet in
-                        Text(pet.name.isEmpty ? "Unnamed Pet" : pet.name)
-                            .tag(Optional(pet.id))
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Caption")
-                    .font(.subheadline.weight(.semibold))
-
-                TextField("What is your pet doing today?", text: $caption, axis: .vertical)
-                    .lineLimit(6...10)
-                    .padding(16)
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Mood")
-                    .font(.subheadline.weight(.semibold))
-
-                TextField("Happy, sleepy, playful...", text: $mood)
-                    .padding(16)
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            }
-        }
-        .padding(20)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-    }
-
-    private var photoCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Photos")
-                    .font(.headline)
-                Spacer()
-                PhotosPicker(selection: $selectedItems, maxSelectionCount: 9, matching: .images) {
-                    Label("Add", systemImage: "plus")
-                        .font(.subheadline.weight(.semibold))
-                }
-            }
-
-            if selectedImageData.isEmpty {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.black.opacity(0.04))
-                    .frame(height: 150)
-                    .overlay {
-                        VStack(spacing: 10) {
-                            Image(systemName: "photo")
-                                .font(.system(size: 24))
-                                .foregroundStyle(.secondary)
-                            Text("Add photos")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-            } else {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                    ForEach(Array(selectedImageData.enumerated()), id: \.offset) { _, data in
-                        if let uiImage = UIImage(data: data) {
-                            Image(uiImage: uiImage)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(height: 140)
-                                .frame(maxWidth: .infinity)
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        }
-                    }
-                }
-            }
-        }
-        .padding(20)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     private var postButton: some View {
         Button {
             savePost()
         } label: {
-            HStack {
-                Spacer()
-                Text("Post")
-                    .font(.headline)
-                Spacer()
-            }
-            .padding(.vertical, 16)
+            Text("Post")
+                .font(.system(size: 17, weight: .medium))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(.tertiarySystemFill) : Color.green)
+                .foregroundColor(caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .white)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .buttonStyle(.borderedProminent)
-        .tint(.orange)
         .disabled(pets.isEmpty || caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 

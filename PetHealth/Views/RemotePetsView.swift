@@ -7,26 +7,47 @@ struct RemotePetsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                headerCard
+            VStack(spacing: 0) {
+                topBar
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
 
                 if petsService.isLoading {
-                    loadingCard
+                    ProgressView()
+                        .padding(.top, 120)
                 } else if let errorMessage = petsService.errorMessage {
-                    errorCard(errorMessage)
+                    Text(errorMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.red)
+                        .padding(.top, 80)
+                        .padding(.horizontal, 24)
                 } else if petsService.pets.isEmpty {
-                    emptyCard
+                    VStack(spacing: 10) {
+                        Image(systemName: "pawprint.circle")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.secondary)
+                        Text("No pets")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 120)
                 } else {
-                    LazyVStack(spacing: 14) {
-                        ForEach(petsService.pets) { pet in
-                            petCard(pet)
+                    VStack(spacing: 0) {
+                        ForEach(Array(petsService.pets.enumerated()), id: \.element.id) { index, pet in
+                            petRow(pet)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+
+                            if index < petsService.pets.count - 1 {
+                                Divider()
+                                    .padding(.leading, 80)
+                            }
                         }
                     }
+                    .background(Color(.systemBackground))
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 28)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Pets")
@@ -43,18 +64,10 @@ struct RemotePetsView: View {
         }
     }
 
-    private var headerCard: some View {
-        HStack(spacing: 14) {
-            Circle()
-                .fill(Color.orange.opacity(0.14))
-                .frame(width: 54, height: 54)
-                .overlay {
-                    Image(systemName: "pawprint.fill")
-                        .foregroundStyle(.orange)
-                }
-
+    private var topBar: some View {
+        HStack {
             Text("Pets")
-                .font(.system(size: 30, weight: .bold))
+                .font(.system(size: 22, weight: .semibold))
 
             Spacer()
 
@@ -62,92 +75,43 @@ struct RemotePetsView: View {
                 showingAddPet = true
             } label: {
                 Image(systemName: "plus")
-                    .font(.headline)
-                    .frame(width: 40, height: 40)
-                    .background(Color.white.opacity(0.8))
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.primary)
             }
             .buttonStyle(.plain)
         }
-        .padding(20)
-        .background(
-            LinearGradient(
-                colors: [Color.orange.opacity(0.16), Color.yellow.opacity(0.08), Color.white],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
     }
 
-    private var loadingCard: some View {
-        VStack {
-            ProgressView()
-                .padding(.vertical, 28)
-        }
-        .frame(maxWidth: .infinity)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-    }
-
-    private func errorCard(_ text: String) -> some View {
-        Text(text)
-            .font(.subheadline)
-            .foregroundStyle(.red)
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.red.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-
-    private var emptyCard: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "pawprint.circle")
-                .font(.system(size: 30))
-                .foregroundStyle(.secondary)
-            Text("No pets yet")
-                .font(.headline)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-    }
-
-    private func petCard(_ pet: RemotePet) -> some View {
-        HStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.orange.opacity(0.12))
-                .frame(width: 58, height: 58)
+    private func petRow(_ pet: RemotePet) -> some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+                .frame(width: 52, height: 52)
                 .overlay {
                     Image(systemName: iconName(for: pet.species ?? ""))
-                        .font(.title3)
-                        .foregroundStyle(.orange)
+                        .font(.system(size: 18))
+                        .foregroundStyle(.gray)
                 }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(pet.name)
-                    .font(.headline)
+                    .font(.system(size: 16, weight: .medium))
 
                 let detail = [pet.species, pet.breed, pet.age]
                     .compactMap { $0 }
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty }
-                    .joined(separator: " • ")
+                    .joined(separator: " · ")
 
                 if !detail.isEmpty {
                     Text(detail)
-                        .font(.subheadline)
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
             }
 
             Spacer()
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private func iconName(for species: String) -> String {

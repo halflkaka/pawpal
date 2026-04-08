@@ -6,129 +6,137 @@ struct FeedView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                topIntro
+            LazyVStack(spacing: 0) {
+                header
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
 
                 if posts.isEmpty {
                     emptyState
+                        .padding(.top, 80)
+                        .padding(.horizontal, 24)
                 } else {
-                    LazyVStack(spacing: 18) {
-                        ForEach(posts) { post in
-                            momentCard(post)
-                        }
+                    ForEach(posts) { post in
+                        momentRow(post)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+
+                        Divider()
+                            .padding(.leading, 72)
                     }
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 28)
         }
-        .background(Color(.systemGroupedBackground))
+        .background(Color(.systemBackground))
         .navigationTitle("Moments")
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var topIntro: some View {
-        HStack(alignment: .center, spacing: 14) {
+    private var header: some View {
+        HStack(spacing: 12) {
             Circle()
-                .fill(Color.orange.opacity(0.14))
-                .frame(width: 54, height: 54)
+                .fill(Color(.secondarySystemBackground))
+                .frame(width: 40, height: 40)
                 .overlay {
                     Image(systemName: "pawprint.fill")
-                        .foregroundStyle(.orange)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.gray)
                 }
 
             Text("Moments")
-                .font(.system(size: 30, weight: .bold))
+                .font(.system(size: 22, weight: .semibold))
 
             Spacer()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .background(
-            LinearGradient(
-                colors: [Color.orange.opacity(0.16), Color.pink.opacity(0.08), Color.white],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
     }
 
     private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: 30))
+        VStack(spacing: 12) {
+            Image(systemName: "photo.on.rectangle")
+                .font(.system(size: 28))
                 .foregroundStyle(.secondary)
-
-            Text("No moments yet")
-                .font(.headline)
+            Text("No moments")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 56)
-        .padding(.horizontal, 24)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
-    private func momentCard(_ post: StoredPost) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                Circle()
-                    .fill(Color.orange.opacity(0.16))
-                    .frame(width: 46, height: 46)
-                    .overlay {
-                        Image(systemName: "pawprint.fill")
-                            .foregroundStyle(.orange)
+    private func momentRow(_ post: StoredPost) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                avatar
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(post.petName.isEmpty ? "Pet" : post.petName)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color(red: 0.22, green: 0.34, blue: 0.52))
+
+                        Spacer()
                     }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(post.petName.isEmpty ? "Pet" : post.petName)
-                        .font(.headline)
-                    Text(post.createdAt.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                    if !post.caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(post.caption)
+                            .font(.system(size: 16))
+                            .foregroundStyle(.primary)
+                            .lineSpacing(3)
+                    }
 
-                Spacer()
-            }
+                    let images = post.imageDataList
+                    if !images.isEmpty {
+                        imageGrid(images)
+                    }
 
-            if !post.caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(post.caption)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .lineSpacing(4)
-            }
-
-            let images = post.imageDataList
-            if !images.isEmpty {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                    ForEach(Array(images.enumerated()), id: \.offset) { _, data in
-                        if let uiImage = UIImage(data: data) {
-                            Image(uiImage: uiImage)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(height: 168)
-                                .frame(maxWidth: .infinity)
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    HStack(spacing: 8) {
+                        if !post.mood.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(post.mood)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
                         }
+
+                        Spacer()
+
+                        Text(post.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                     }
                 }
-            }
-
-            if !post.mood.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(post.mood)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.black.opacity(0.04))
-                    .clipShape(Capsule())
             }
         }
-        .padding(18)
+    }
+
+    private var avatar: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color(.secondarySystemBackground))
+            .frame(width: 48, height: 48)
+            .overlay {
+                Image(systemName: "pawprint.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.gray)
+            }
+    }
+
+    private func imageGrid(_ images: [Data]) -> some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: min(images.count == 1 ? 1 : 3, 3))
+
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+            ForEach(Array(images.enumerated()), id: \.offset) { _, data in
+                if let uiImage = UIImage(data: data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: imageWidth(for: images.count), height: imageWidth(for: images.count))
+                        .clipped()
+                }
+            }
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func imageWidth(for count: Int) -> CGFloat {
+        if count == 1 { return 180 }
+        return 92
     }
 }
