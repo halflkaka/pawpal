@@ -29,16 +29,22 @@ struct FeedView: View {
     }
 
     private var topIntro: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Moments")
-                .font(.system(size: 34, weight: .bold))
+        HStack(alignment: .center, spacing: 14) {
+            Circle()
+                .fill(Color.orange.opacity(0.14))
+                .frame(width: 54, height: 54)
+                .overlay {
+                    Image(systemName: "pawprint.fill")
+                        .foregroundStyle(.orange)
+                }
 
-            Text("Small daily notes, photos, and quiet updates from pet life.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            Text("Moments")
+                .font(.system(size: 30, weight: .bold))
+
+            Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(24)
+        .padding(20)
         .background(
             LinearGradient(
                 colors: [Color.orange.opacity(0.16), Color.pink.opacity(0.08), Color.white],
@@ -57,11 +63,6 @@ struct FeedView: View {
 
             Text("No moments yet")
                 .font(.headline)
-
-            Text("Your pet’s photos and daily updates will appear here.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 56)

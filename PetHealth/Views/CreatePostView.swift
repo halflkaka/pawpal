@@ -45,16 +45,22 @@ struct CreatePostView: View {
     }
 
     private var introCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("New moment")
-                .font(.system(size: 30, weight: .bold))
+        HStack(spacing: 14) {
+            Circle()
+                .fill(Color.orange.opacity(0.14))
+                .frame(width: 54, height: 54)
+                .overlay {
+                    Image(systemName: "square.and.pencil")
+                        .foregroundStyle(.orange)
+                }
 
-            Text("Write a short update, add a few photos, and keep it simple.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            Text("New moment")
+                .font(.system(size: 28, weight: .bold))
+
+            Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(24)
+        .padding(20)
         .background(
             LinearGradient(
                 colors: [Color.yellow.opacity(0.14), Color.orange.opacity(0.10), Color.white],
@@ -69,9 +75,6 @@ struct CreatePostView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Add a pet first")
                 .font(.headline)
-            Text("You’ll be able to post once a pet profile exists.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
@@ -144,7 +147,7 @@ struct CreatePostView: View {
                             Image(systemName: "photo")
                                 .font(.system(size: 24))
                                 .foregroundStyle(.secondary)
-                            Text("Add a few images")
+                            Text("Add photos")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
