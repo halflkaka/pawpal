@@ -36,11 +36,11 @@ struct ProfileView: View {
             }
         }
         .sheet(isPresented: $showingAddPet) {
-            RemoteAddPetSheet { name, species, breed, age, weight, notes in
+            ProfileAddPetSheet { name, species, breed, age, weight, notes in
                 Task {
                     await petsService.addPet(for: user.id, name: name, species: species, breed: breed, age: age, weight: weight, notes: notes)
-                    if let firstPet = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
-                        activePetID = firstPet.id.uuidString
+                    if let selected = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
+                        activePetID = selected.id.uuidString
                     } else if let firstPet = petsService.pets.first {
                         activePetID = firstPet.id.uuidString
                     }
@@ -272,5 +272,49 @@ struct ProfileView: View {
 
     private var fallbackName: String {
         user.email?.components(separatedBy: "@").first ?? "User"
+    }
+}
+
+private struct ProfileAddPetSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var species = "Dog"
+    @State private var breed = ""
+    @State private var age = ""
+    @State private var weight = ""
+    @State private var notes = ""
+
+    let onSave: (String, String, String, String, String, String) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Name", text: $name)
+                Picker("Species", selection: $species) {
+                    Text("Dog").tag("Dog")
+                    Text("Cat").tag("Cat")
+                    Text("Other").tag("Other")
+                }
+                TextField("Breed", text: $breed)
+                TextField("Age", text: $age)
+                TextField("Weight", text: $weight)
+                TextField("Notes", text: $notes, axis: .vertical)
+                    .lineLimit(3...6)
+            }
+            .navigationTitle("Add Pet")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(name, species, breed, age, weight, notes)
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
     }
 }
