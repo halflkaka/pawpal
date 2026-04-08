@@ -2,12 +2,10 @@ import SwiftUI
 
 struct MainTabView: View {
     enum AppTab: Hashable {
+        case chat
+        case contacts
         case moments
-        case post
-        case pets
-        case care
-        case vets
-        case me
+        case profile
     }
 
     @State private var selectedTab: AppTab = .moments
@@ -16,46 +14,28 @@ struct MainTabView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
+                ChatListView()
+            }
+            .tabItem {
+                Label("Chat", systemImage: "message.fill")
+            }
+            .tag(AppTab.chat)
+
+            NavigationStack {
+                ContactsView()
+            }
+            .tabItem {
+                Label("Contacts", systemImage: "person.2.fill")
+            }
+            .tag(AppTab.contacts)
+
+            NavigationStack {
                 FeedView()
             }
             .tabItem {
-                Label("Moments", systemImage: "house.fill")
+                Label("Moments", systemImage: "camera.on.rectangle")
             }
             .tag(AppTab.moments)
-
-            NavigationStack {
-                CreatePostView()
-            }
-            .tabItem {
-                Label("Post", systemImage: "square.and.pencil")
-            }
-            .tag(AppTab.post)
-
-            NavigationStack {
-                if let user = authManager.currentUser {
-                    RemotePetsView(user: user)
-                }
-            }
-            .tabItem {
-                Label("Pets", systemImage: "pawprint.fill")
-            }
-            .tag(AppTab.pets)
-
-            NavigationStack {
-                HomeView()
-            }
-            .tabItem {
-                Label("Care", systemImage: "stethoscope")
-            }
-            .tag(AppTab.care)
-
-            NavigationStack {
-                VetFinderView()
-            }
-            .tabItem {
-                Label("Vets", systemImage: "cross.case.fill")
-            }
-            .tag(AppTab.vets)
 
             NavigationStack {
                 if let user = authManager.currentUser {
@@ -63,9 +43,9 @@ struct MainTabView: View {
                 }
             }
             .tabItem {
-                Label("Me", systemImage: "person.fill")
+                Label("Profile", systemImage: "person.crop.circle")
             }
-            .tag(AppTab.me)
+            .tag(AppTab.profile)
         }
     }
 }
