@@ -11,6 +11,9 @@ struct ContentView: View {
                 MainTabView(authManager: authManager)
             }
         }
+        .task {
+            await authManager.restoreSession()
+        }
     }
 }
 

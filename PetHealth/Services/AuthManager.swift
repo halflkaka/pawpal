@@ -8,26 +8,60 @@ final class AuthManager {
     var isLoading = false
     var errorMessage: String?
 
+    private let authService: AuthService
+
+    init(authService: AuthService = PlaceholderAuthService()) {
+        self.authService = authService
+    }
+
+    func restoreSession() async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        do {
+            currentUser = try await authService.restoreSession()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func signIn(email: String, password: String) async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
 
-        // Placeholder auth scaffold. Supabase SDK integration is the next step.
-        // For now this establishes the app structure for a real account flow.
-        if email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty {
-            errorMessage = "Email and password are required."
-            return
+        do {
+            currentUser = try await authService.signIn(email: email, password: password)
+        } catch {
+            errorMessage = error.localizedDescription
         }
-
-        currentUser = AppUser(id: UUID(), email: email, displayName: email.components(separatedBy: "@").first)
     }
 
     func register(email: String, password: String) async {
-        await signIn(email: email, password: password)
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        do {
+            currentUser = try await authService.register(email: email, password: password)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func signOut() {
-        currentUser = nil
+        Task {
+            do {
+                try await authService.signOut()
+                await MainActor.run {
+                    currentUser = nil
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
     }
 }
