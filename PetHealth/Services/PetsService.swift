@@ -66,4 +66,19 @@ final class PetsService: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
+
+    func deletePet(_ petID: UUID, for userID: UUID) async {
+        errorMessage = nil
+
+        do {
+            try await client
+                .from("pets")
+                .delete()
+                .eq("id", value: petID.uuidString)
+                .execute()
+            await loadPets(for: userID)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
 }
