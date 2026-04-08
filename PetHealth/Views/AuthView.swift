@@ -44,25 +44,13 @@ struct AuthView: View {
                     .foregroundStyle(.orange)
             }
 
-            VStack(spacing: 8) {
-                Text("PetHealth")
-                    .font(.system(size: 34, weight: .bold))
-                Text("A pet moments app with care tools.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+            Text("PetHealth")
+                .font(.system(size: 34, weight: .bold))
         }
     }
 
     private var authCard: some View {
         VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(isRegisterMode ? "Create your account" : "Sign in")
-                    .font(.title3.bold())
-                Text(isRegisterMode ? "Start posting pet moments and building your pet space." : "Continue to your pets, moments, and feed.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
 
             VStack(spacing: 14) {
                 field(title: "Email") {
