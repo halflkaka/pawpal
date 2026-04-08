@@ -10,7 +10,7 @@ final class AuthManager {
 
     private let authService: AuthService
 
-    init(authService: AuthService = PlaceholderAuthService()) {
+    init(authService: AuthService = SupabaseAuthService()) {
         self.authService = authService
     }
 
