@@ -1,4 +1,5 @@
 import SwiftUI
+import Supabase
 
 struct ProfileView: View {
     let user: AppUser
@@ -10,6 +11,9 @@ struct ProfileView: View {
     @State private var isSavingPet = false
     @State private var pendingDeletePet: RemotePet?
     @State private var statusMessage: String?
+    @State private var profile: RemoteProfile?
+    @State private var isLoadingProfile = false
+    @State private var profileErrorMessage: String?
 
     private var activePet: RemotePet? {
         if let match = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
@@ -37,12 +41,14 @@ struct ProfileView: View {
         .navigationTitle("Profile")
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            await loadProfile()
             await petsService.loadPets(for: user.id)
             if activePetID.isEmpty, let firstPet = petsService.pets.first {
                 activePetID = firstPet.id.uuidString
             }
         }
         .refreshable {
+            await loadProfile()
             await petsService.loadPets(for: user.id)
         }
         .sheet(isPresented: $showingAddPet) {
@@ -60,6 +66,7 @@ struct ProfileView: View {
                     activePetID = firstPet.id.uuidString
                 }
 
+                statusMessage = "Pet added"
                 return true
             }
         }
@@ -108,9 +115,9 @@ struct ProfileView: View {
     private var petHero: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color(.secondarySystemBackground))
-                    .frame(width: 76, height: 76)
+                    .frame(width: 78, height: 78)
                     .overlay {
                         Image(systemName: petIconName)
                             .font(.system(size: 28))
@@ -129,17 +136,7 @@ struct ProfileView: View {
             }
 
             if petsService.isLoading && petsService.pets.isEmpty {
-                HStack(spacing: 10) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Loading pets")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                feedbackCard(icon: nil, text: "Loading pets", tint: .secondary, showsProgress: true)
             }
 
             if let activePet {
@@ -157,7 +154,7 @@ struct ProfileView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -185,43 +182,21 @@ struct ProfileView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
 
             if let statusMessage {
-                HStack(spacing: 10) {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(.green)
-                    Text(statusMessage)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                feedbackCard(icon: "checkmark.circle", text: statusMessage, tint: .green)
             } else if let errorMessage = petsService.errorMessage {
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.circle")
-                        .foregroundStyle(.red)
-                    Text(errorMessage)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                feedbackCard(icon: "exclamationmark.circle", text: errorMessage, tint: .red)
             }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var petsSection: some View {
@@ -249,7 +224,7 @@ struct ProfileView: View {
                 .padding(.bottom, 16)
             } else if petsService.pets.isEmpty {
                 HStack {
-                    Text("No pets")
+                    Text("No pets yet")
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -266,12 +241,12 @@ struct ProfileView: View {
             }
         }
         .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func petRow(_ pet: RemotePet) -> some View {
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color(.secondarySystemBackground))
                 .frame(width: 56, height: 56)
                 .overlay {
@@ -329,13 +304,47 @@ struct ProfileView: View {
     }
 
     private var accountSection: some View {
-        VStack(spacing: 0) {
-            accountRow(title: "Display Name", value: user.displayName ?? fallbackName)
-            Divider().padding(.leading, 16)
-            accountRow(title: "Email", value: user.email ?? "")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+                    .frame(width: 64, height: 64)
+                    .overlay {
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.gray)
+                    }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(accountDisplayName)
+                        .font(.system(size: 22, weight: .semibold))
+                    Text(user.email ?? "")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+
+            if isLoadingProfile {
+                feedbackCard(icon: nil, text: "Loading account", tint: .secondary, showsProgress: true)
+            } else if let profileErrorMessage {
+                feedbackCard(icon: "exclamationmark.circle", text: profileErrorMessage, tint: .red)
+            }
+
+            VStack(spacing: 0) {
+                accountRow(title: "Display Name", value: accountDisplayName)
+                Divider().padding(.leading, 16)
+                accountRow(title: "Username", value: profile?.username ?? "Not set")
+                Divider().padding(.leading, 16)
+                accountRow(title: "Email", value: user.email ?? "")
+            }
+            .background(Color(.secondarySystemBackground).opacity(0.45))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
+        .padding(18)
         .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var signOutSection: some View {
@@ -350,9 +359,17 @@ struct ProfileView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
             .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+
+    private var accountDisplayName: String {
+        let displayName = profile?.display_name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let displayName, !displayName.isEmpty {
+            return displayName
+        }
+        return user.displayName ?? fallbackName
     }
 
     private var deleteAlertBinding: Binding<Bool> {
@@ -384,6 +401,39 @@ struct ProfileView: View {
         .font(.system(size: 16))
         .padding(.horizontal, 16)
         .padding(.vertical, 16)
+    }
+
+    private func feedbackCard(icon: String?, text: String, tint: Color, showsProgress: Bool = false) -> some View {
+        HStack(spacing: 10) {
+            if showsProgress {
+                ProgressView()
+                    .controlSize(.small)
+            } else if let icon {
+                Image(systemName: icon)
+                    .foregroundStyle(tint)
+            }
+
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Color(.secondarySystemBackground).opacity(0.45))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func loadProfile() async {
+        isLoadingProfile = true
+        profileErrorMessage = nil
+        defer { isLoadingProfile = false }
+
+        do {
+            profile = try await ProfileService().loadProfile(for: user.id)
+        } catch {
+            profileErrorMessage = error.localizedDescription
+        }
     }
 
     private var activePetSummary: String {
@@ -538,7 +588,7 @@ private struct ProfilePetEditorSheet: View {
                         } label: {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(canSave ? Color.green : Color(.tertiarySystemFill))
+                                    .fill(canSave ? Color.black : Color(.tertiarySystemFill))
                                     .frame(height: 50)
 
                                 if isSaving {
@@ -591,6 +641,43 @@ private struct ProfilePetEditorSheet: View {
         case "cat": return "cat.fill"
         case "other": return "pawprint.circle.fill"
         default: return "dog.fill"
+        }
+    }
+}
+
+private struct RemoteProfile: Decodable {
+    let id: UUID
+    let username: String?
+    let display_name: String?
+    let bio: String?
+    let avatar_url: String?
+}
+
+private struct ProfileService {
+    private let client: SupabaseClient
+
+    init() {
+        guard let url = URL(string: SupabaseConfig.urlString) else {
+            fatalError("Invalid Supabase URL")
+        }
+        client = SupabaseClient(supabaseURL: url, supabaseKey: SupabaseConfig.anonKey)
+    }
+
+    func loadProfile(for userID: UUID) async throws -> RemoteProfile? {
+        do {
+            return try await client
+                .from("profiles")
+                .select()
+                .eq("id", value: userID.uuidString)
+                .single()
+                .execute()
+                .value
+        } catch {
+            let message = error.localizedDescription.lowercased()
+            if message.contains("0 rows") || message.contains("json object requested, multiple (or no) rows returned") {
+                return nil
+            }
+            throw error
         }
     }
 }
