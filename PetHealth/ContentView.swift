@@ -16,6 +16,8 @@ struct ContentView: View {
                     AuthView(authManager: authManager)
                 } else if !hasCheckedPets {
                     transitionOverlay(label: "Preparing your pet profile")
+                } else if let petsError = petsService.errorMessage {
+                    petLoadErrorView(message: petsError)
                 } else if shouldShowFirstPetSetup, let user = authManager.currentUser {
                     FirstPetSetupView(user: user) { pet in
                         activePetID = pet.id.uuidString
@@ -57,7 +59,7 @@ struct ContentView: View {
     }
 
     private var shouldShowFirstPetSetup: Bool {
-        guard authManager.currentUser != nil, hasCheckedPets else { return false }
+        guard authManager.currentUser != nil, hasCheckedPets, petsService.errorMessage == nil else { return false }
         return petsService.pets.isEmpty
     }
 
@@ -88,6 +90,44 @@ struct ContentView: View {
                         .font(.system(size: 14))
                         .foregroundStyle(.secondary)
                 }
+            }
+        }
+    }
+
+    private func petLoadErrorView(message: String) -> some View {
+        ZStack {
+            Color(.systemGroupedBackground)
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+                    .frame(width: 72, height: 72)
+                    .overlay {
+                        Image(systemName: "exclamationmark.circle")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.gray)
+                    }
+
+                VStack(spacing: 8) {
+                    Text("Couldn’t load your pet profile")
+                        .font(.system(size: 20, weight: .semibold))
+
+                    Text(message)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 24)
+
+                Button("Sign Out") {
+                    authManager.signOut()
+                }
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(.primary)
+                .frame(width: 140, height: 46)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
     }
