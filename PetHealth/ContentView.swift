@@ -6,6 +6,7 @@ struct ContentView: View {
     @StateObject private var petsService = PetsService()
     @State private var hasCheckedPets = false
     @State private var isEnteringFirstPetFlow = false
+    @State private var pendingFirstPet: RemotePet?
 
     var body: some View {
         ZStack {
@@ -16,10 +17,11 @@ struct ContentView: View {
                     AuthView(authManager: authManager)
                 } else if !hasCheckedPets {
                     transitionOverlay(label: "Preparing your pet profile")
-                } else if let petsError = petsService.errorMessage {
+                } else if let petsError = petsService.errorMessage, pendingFirstPet == nil {
                     petLoadErrorView(message: petsError)
                 } else if shouldShowFirstPetSetup, let user = authManager.currentUser {
                     FirstPetSetupView(user: user) { pet in
+                        pendingFirstPet = pet
                         petsService.pets = [pet]
                         petsService.errorMessage = nil
                         activePetID = pet.id.uuidString
@@ -45,8 +47,18 @@ struct ContentView: View {
         }
         .task(id: authManager.currentUser?.id) {
             guard let user = authManager.currentUser else {
+                pendingFirstPet = nil
                 hasCheckedPets = false
                 isEnteringFirstPetFlow = false
+                return
+            }
+            if let pendingFirstPet {
+                petsService.pets = [pendingFirstPet]
+                petsService.errorMessage = nil
+                activePetID = pendingFirstPet.id.uuidString
+                isEnteringFirstPetFlow = false
+                hasCheckedPets = true
+                self.pendingFirstPet = nil
                 return
             }
             hasCheckedPets = false
@@ -61,7 +73,7 @@ struct ContentView: View {
     }
 
     private var shouldShowFirstPetSetup: Bool {
-        guard authManager.currentUser != nil, hasCheckedPets, petsService.errorMessage == nil else { return false }
+        guard authManager.currentUser != nil, hasCheckedPets, pendingFirstPet == nil, petsService.errorMessage == nil else { return false }
         return petsService.pets.isEmpty
     }
 
