@@ -12,6 +12,7 @@ struct FirstPetSetupView: View {
     @State private var weight = ""
     @State private var notes = ""
     @State private var isSaving = false
+    @State private var isCompleting = false
     @State private var currentStep = 0
     @FocusState private var isTextFieldFocused: Bool
 
@@ -36,74 +37,25 @@ struct FirstPetSetupView: View {
                         .padding(.horizontal, 24)
                         .padding(.top, 28)
 
-                    TabView(selection: $currentStep) {
-                        stepScaffold(
-                            eyebrow: "Name",
-                            title: "What's your pet's name?",
-                            subtitle: "Start with the name you'll call them every day."
-                        ) {
-                            refinedTextField(text: $name, placeholder: "Pet name")
-                        }
-                        .tag(0)
-
-                        stepScaffold(
-                            eyebrow: "Species",
-                            title: "What species are they?",
-                            subtitle: "Choose the one that fits best."
-                        ) {
-                            speciesPicker
-                        }
-                        .tag(1)
-
-                        stepScaffold(
-                            eyebrow: "Breed",
-                            title: "What's their breed?",
-                            subtitle: "Optional, you can always change this later."
-                        ) {
-                            refinedTextField(text: $breed, placeholder: "Breed")
-                        }
-                        .tag(2)
-
-                        stepScaffold(
-                            eyebrow: "Age",
-                            title: "How old are they?",
-                            subtitle: "Optional, any format is fine."
-                        ) {
-                            refinedTextField(text: $age, placeholder: "2 years")
-                        }
-                        .tag(3)
-
-                        stepScaffold(
-                            eyebrow: "Weight",
-                            title: "How much do they weigh?",
-                            subtitle: "Optional, add a unit if you want."
-                        ) {
-                            refinedTextField(text: $weight, placeholder: "12 lb")
-                        }
-                        .tag(4)
-
-                        stepScaffold(
-                            eyebrow: "Notes",
-                            title: "Anything else to remember?",
-                            subtitle: "Optional notes for now."
-                        ) {
-                            notesEditor
-                        }
-                        .tag(5)
-                    }
-                    .tabViewStyle(.page(indexDisplayMode: .never))
-                    .animation(.easeInOut(duration: 0.22), value: currentStep)
-                    .onChange(of: currentStep) { _, newValue in
-                        isTextFieldFocused = newValue != 1 && newValue != 5
-                    }
+                    stepContent
 
                     bottomBar
                         .padding(.horizontal, 24)
                         .padding(.bottom, 20)
                         .padding(.top, 8)
                 }
+
+                if isCompleting {
+                    completionOverlay
+                }
             }
             .navigationBarBackButtonHidden(true)
+        }
+        .onAppear {
+            updateFocus(for: currentStep)
+        }
+        .onChange(of: currentStep) { _, newValue in
+            updateFocus(for: newValue)
         }
     }
 
@@ -139,6 +91,65 @@ struct FirstPetSetupView: View {
         }
     }
 
+    @ViewBuilder
+    private var stepContent: some View {
+        Group {
+            switch currentStep {
+            case 0:
+                stepScaffold(
+                    eyebrow: "Name",
+                    title: "What's your pet's name?",
+                    subtitle: "Start with the name you'll call them every day."
+                ) {
+                    refinedTextField(text: $name, placeholder: "Pet name")
+                }
+            case 1:
+                stepScaffold(
+                    eyebrow: "Species",
+                    title: "What species are they?",
+                    subtitle: "Choose the one that fits best."
+                ) {
+                    speciesPicker
+                }
+            case 2:
+                stepScaffold(
+                    eyebrow: "Breed",
+                    title: "What's their breed?",
+                    subtitle: "Optional, you can always change this later."
+                ) {
+                    refinedTextField(text: $breed, placeholder: "Breed")
+                }
+            case 3:
+                stepScaffold(
+                    eyebrow: "Age",
+                    title: "How old are they?",
+                    subtitle: "Optional, any format is fine."
+                ) {
+                    refinedTextField(text: $age, placeholder: "2 years")
+                }
+            case 4:
+                stepScaffold(
+                    eyebrow: "Weight",
+                    title: "How much do they weigh?",
+                    subtitle: "Optional, add a unit if you want."
+                ) {
+                    refinedTextField(text: $weight, placeholder: "12 lb")
+                }
+            default:
+                stepScaffold(
+                    eyebrow: "Notes",
+                    title: "Anything else to remember?",
+                    subtitle: "Optional notes for now."
+                ) {
+                    notesEditor
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .gesture(stepSwipeGesture)
+        .animation(.easeInOut(duration: 0.22), value: currentStep)
+    }
+
     private var bottomBar: some View {
         VStack(spacing: 14) {
             progressBar
@@ -154,9 +165,7 @@ struct FirstPetSetupView: View {
             HStack(spacing: 12) {
                 if currentStep > 0 {
                     Button {
-                        withAnimation {
-                            currentStep -= 1
-                        }
+                        goBack()
                     } label: {
                         Text("Back")
                             .font(.system(size: 16, weight: .medium))
@@ -166,25 +175,18 @@ struct FirstPetSetupView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
                     .buttonStyle(.plain)
+                    .disabled(isSaving || isCompleting)
                 }
 
                 Button {
-                    if isLastStep {
-                        Task {
-                            await save()
-                        }
-                    } else {
-                        withAnimation {
-                            currentStep += 1
-                        }
-                    }
+                    advance()
                 } label: {
                     ZStack {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .fill(primaryButtonEnabled ? Color.black : Color(.tertiarySystemFill))
                             .frame(height: 52)
 
-                        if isSaving {
+                        if isSaving || isCompleting {
                             ProgressView()
                                 .tint(.white)
                         } else {
@@ -195,7 +197,7 @@ struct FirstPetSetupView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(!primaryButtonEnabled || isSaving)
+                .disabled(!primaryButtonEnabled || isSaving || isCompleting)
             }
         }
     }
@@ -283,6 +285,10 @@ struct FirstPetSetupView: View {
                 .textInputAutocapitalization(.words)
                 .foregroundStyle(.primary)
                 .focused($isTextFieldFocused)
+                .submitLabel(isLastStep ? .done : .next)
+                .onSubmit {
+                    advance()
+                }
 
             Rectangle()
                 .fill(Color.black.opacity(0.12))
@@ -349,6 +355,26 @@ struct FirstPetSetupView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
+    private var completionOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.08)
+                .ignoresSafeArea()
+
+            VStack(spacing: 12) {
+                ProgressView()
+                    .tint(.secondary)
+
+                Text("Opening your pet profile")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 20)
+            .background(Color(.systemBackground).opacity(0.96))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+    }
+
     private var progressValue: CGFloat {
         CGFloat(currentStep + 1) / 6
     }
@@ -368,8 +394,52 @@ struct FirstPetSetupView: View {
         return currentStep != 0 || canSave
     }
 
+    private var stepSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                guard !isSaving && !isCompleting else { return }
+
+                if value.translation.width < -50 {
+                    advance()
+                } else if value.translation.width > 50 {
+                    goBack()
+                }
+            }
+    }
+
+    private func updateFocus(for step: Int) {
+        isTextFieldFocused = step == 0 || step == 2 || step == 3 || step == 4
+    }
+
+    private func advance() {
+        guard !isSaving && !isCompleting else { return }
+
+        if isLastStep {
+            Task {
+                await save()
+            }
+            return
+        }
+
+        if currentStep == 0 && !canSave {
+            return
+        }
+
+        withAnimation {
+            currentStep = min(currentStep + 1, 5)
+        }
+    }
+
+    private func goBack() {
+        guard !isSaving && !isCompleting, currentStep > 0 else { return }
+
+        withAnimation {
+            currentStep = max(currentStep - 1, 0)
+        }
+    }
+
     private func save() async {
-        guard canSave else { return }
+        guard canSave, !isSaving, !isCompleting else { return }
         isSaving = true
         petsService.errorMessage = nil
         defer { isSaving = false }
@@ -389,6 +459,7 @@ struct FirstPetSetupView: View {
             return
         }
 
+        isCompleting = true
         onComplete(pet)
     }
 }
