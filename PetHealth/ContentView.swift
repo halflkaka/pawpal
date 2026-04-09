@@ -27,7 +27,7 @@ struct ContentView: View {
 
             if authManager.isSigningOut {
                 transitionOverlay(label: "Signing out")
-            } else if isEnteringFirstPetFlow {
+            } else if isEnteringFirstPetFlow && !shouldShowFirstPetSetup {
                 transitionOverlay(label: "Preparing your pet profile")
             }
         }
@@ -47,8 +47,8 @@ struct ContentView: View {
             if activePetID.isEmpty, let firstPet = petsService.pets.first {
                 activePetID = firstPet.id.uuidString
             }
+            isEnteringFirstPetFlow = false
             hasCheckedPets = true
-            isEnteringFirstPetFlow = petsService.pets.isEmpty
         }
     }
 
