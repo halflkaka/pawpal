@@ -390,18 +390,85 @@ private struct ProfilePetEditorSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                TextField("Name", text: $name)
-                Picker("Species", selection: $species) {
-                    Text("Dog").tag("Dog")
-                    Text("Cat").tag("Cat")
-                    Text("Other").tag("Other")
+            ZStack {
+                Color(.systemGroupedBackground)
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 20) {
+                        VStack(spacing: 14) {
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color(.secondarySystemBackground))
+                                .frame(width: 72, height: 72)
+                                .overlay {
+                                    Image(systemName: iconName(for: species))
+                                        .font(.system(size: 28))
+                                        .foregroundStyle(.gray)
+                                }
+
+                            Text(title)
+                                .font(.system(size: 24, weight: .semibold))
+                        }
+                        .padding(.top, 20)
+
+                        VStack(spacing: 0) {
+                            inputRow(title: "Name") {
+                                TextField("Pet name", text: $name)
+                            }
+                            Divider().padding(.leading, 16)
+                            inputRow(title: "Species") {
+                                Picker("Species", selection: $species) {
+                                    Text("Dog").tag("Dog")
+                                    Text("Cat").tag("Cat")
+                                    Text("Other").tag("Other")
+                                }
+                                .pickerStyle(.menu)
+                            }
+                            Divider().padding(.leading, 16)
+                            inputRow(title: "Breed") {
+                                TextField("Optional", text: $breed)
+                            }
+                            Divider().padding(.leading, 16)
+                            inputRow(title: "Age") {
+                                TextField("Optional", text: $age)
+                            }
+                            Divider().padding(.leading, 16)
+                            inputRow(title: "Weight") {
+                                TextField("Optional", text: $weight)
+                            }
+                        }
+                        .background(Color(.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Notes")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(.secondary)
+
+                            TextField("Optional", text: $notes, axis: .vertical)
+                                .lineLimit(4...8)
+                                .font(.system(size: 16))
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                        Button("Save") {
+                            onSave(name, species, breed, age, weight, notes)
+                            dismiss()
+                        }
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(canSave ? .white : .secondary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(canSave ? Color.green : Color(.tertiarySystemFill))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .disabled(!canSave)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 24)
                 }
-                TextField("Breed", text: $breed)
-                TextField("Age", text: $age)
-                TextField("Weight", text: $weight)
-                TextField("Notes", text: $notes, axis: .vertical)
-                    .lineLimit(3...6)
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
@@ -409,14 +476,33 @@ private struct ProfilePetEditorSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        onSave(name, species, breed, age, weight, notes)
-                        dismiss()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
             }
+        }
+    }
+
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func inputRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 16) {
+            Text(title)
+                .font(.system(size: 16))
+                .foregroundStyle(.secondary)
+                .frame(width: 78, alignment: .leading)
+
+            content()
+                .font(.system(size: 16))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
+    }
+
+    private func iconName(for species: String) -> String {
+        switch species.lowercased() {
+        case "cat": return "cat.fill"
+        case "other": return "pawprint.circle.fill"
+        default: return "dog.fill"
         }
     }
 }
