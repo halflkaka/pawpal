@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 
 struct ProfileView: View {
     let user: AppUser
@@ -8,12 +7,16 @@ struct ProfileView: View {
     @StateObject private var petsService = PetsService()
     @State private var showingAddPet = false
     @State private var editingPet: RemotePet?
+    @State private var showingEditAccount = false
     @State private var isSavingPet = false
+    @State private var isSavingProfile = false
     @State private var pendingDeletePet: RemotePet?
     @State private var statusMessage: String?
     @State private var profile: RemoteProfile?
     @State private var isLoadingProfile = false
     @State private var profileErrorMessage: String?
+
+    private let profileService = ProfileService()
 
     private var activePet: RemotePet? {
         if let match = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
@@ -90,6 +93,17 @@ struct ProfileView: View {
                 }
                 return false
             }
+        }
+        .sheet(isPresented: $showingEditAccount) {
+            ProfileAccountEditorSheet(
+                profile: editableProfile,
+                fallbackDisplayName: fallbackName,
+                isSaving: isSavingProfile,
+                errorMessage: profileErrorMessage,
+                onSave: { username, displayName, bio in
+                    await saveProfile(username: username, displayName: displayName, bio: bio)
+                }
+            )
         }
         .alert("Delete Pet?", isPresented: deleteAlertBinding, presenting: pendingDeletePet) { pet in
             Button("Delete", role: .destructive) {
@@ -324,6 +338,18 @@ struct ProfileView: View {
                 }
 
                 Spacer()
+
+                Button {
+                    showingEditAccount = true
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .frame(width: 38, height: 38)
+                        .background(Color(.secondarySystemBackground).opacity(0.8))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
             }
 
             if isLoadingProfile {
@@ -336,6 +362,8 @@ struct ProfileView: View {
                 accountRow(title: "Display Name", value: accountDisplayName)
                 Divider().padding(.leading, 16)
                 accountRow(title: "Username", value: profile?.username ?? "Not set")
+                Divider().padding(.leading, 16)
+                accountRow(title: "Bio", value: profile?.bio ?? "Not set")
                 Divider().padding(.leading, 16)
                 accountRow(title: "Email", value: user.email ?? "")
             }
@@ -372,6 +400,10 @@ struct ProfileView: View {
         return user.displayName ?? fallbackName
     }
 
+    private var editableProfile: RemoteProfile {
+        profile ?? RemoteProfile(id: user.id, username: nil, display_name: user.displayName, bio: nil, avatar_url: nil)
+    }
+
     private var deleteAlertBinding: Binding<Bool> {
         Binding(
             get: { pendingDeletePet != nil },
@@ -391,11 +423,12 @@ struct ProfileView: View {
     }
 
     private func accountRow(title: String, value: String) -> some View {
-        HStack(spacing: 16) {
+        HStack(alignment: .top, spacing: 16) {
             Text(title)
                 .foregroundStyle(.primary)
-            Spacer()
+            Spacer(minLength: 16)
             Text(value)
+                .multilineTextAlignment(.trailing)
                 .foregroundStyle(.secondary)
         }
         .font(.system(size: 16))
@@ -430,9 +463,25 @@ struct ProfileView: View {
         defer { isLoadingProfile = false }
 
         do {
-            profile = try await ProfileService().loadProfile(for: user.id)
+            profile = try await profileService.loadProfile(for: user.id)
         } catch {
             profileErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func saveProfile(username: String, displayName: String, bio: String) async -> Bool {
+        guard !isSavingProfile else { return false }
+        isSavingProfile = true
+        profileErrorMessage = nil
+        defer { isSavingProfile = false }
+
+        do {
+            profile = try await profileService.saveProfile(for: user.id, username: username, displayName: displayName, bio: bio)
+            statusMessage = "Account updated"
+            return true
+        } catch {
+            profileErrorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -645,39 +694,146 @@ private struct ProfilePetEditorSheet: View {
     }
 }
 
-private struct RemoteProfile: Decodable {
-    let id: UUID
-    let username: String?
-    let display_name: String?
-    let bio: String?
-    let avatar_url: String?
-}
+private struct ProfileAccountEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var username: String
+    @State private var displayName: String
+    @State private var bio: String
 
-private struct ProfileService {
-    private let client: SupabaseClient
+    let isSaving: Bool
+    let errorMessage: String?
+    let onSave: (String, String, String) async -> Bool
 
-    init() {
-        guard let url = URL(string: SupabaseConfig.urlString) else {
-            fatalError("Invalid Supabase URL")
-        }
-        client = SupabaseClient(supabaseURL: url, supabaseKey: SupabaseConfig.anonKey)
+    init(profile: RemoteProfile, fallbackDisplayName: String, isSaving: Bool, errorMessage: String?, onSave: @escaping (String, String, String) async -> Bool) {
+        self.isSaving = isSaving
+        self.errorMessage = errorMessage
+        self.onSave = onSave
+        _username = State(initialValue: profile.username ?? "")
+        _displayName = State(initialValue: profile.display_name ?? fallbackDisplayName)
+        _bio = State(initialValue: profile.bio ?? "")
     }
 
-    func loadProfile(for userID: UUID) async throws -> RemoteProfile? {
-        do {
-            return try await client
-                .from("profiles")
-                .select()
-                .eq("id", value: userID.uuidString)
-                .single()
-                .execute()
-                .value
-        } catch {
-            let message = error.localizedDescription.lowercased()
-            if message.contains("0 rows") || message.contains("json object requested, multiple (or no) rows returned") {
-                return nil
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(.systemGroupedBackground)
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 20) {
+                        VStack(spacing: 14) {
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color(.secondarySystemBackground))
+                                .frame(width: 72, height: 72)
+                                .overlay {
+                                    Image(systemName: "person.crop.circle.fill")
+                                        .font(.system(size: 28))
+                                        .foregroundStyle(.gray)
+                                }
+
+                            Text("Edit Account")
+                                .font(.system(size: 24, weight: .semibold))
+                        }
+                        .padding(.top, 20)
+
+                        VStack(spacing: 0) {
+                            inputRow(title: "Username") {
+                                TextField("Required", text: $username)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                            }
+                            Divider().padding(.leading, 16)
+                            inputRow(title: "Display") {
+                                TextField("Optional", text: $displayName)
+                            }
+                        }
+                        .background(Color(.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Bio")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(.secondary)
+
+                            TextField("Optional", text: $bio, axis: .vertical)
+                                .lineLimit(4...8)
+                                .font(.system(size: 16))
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                        if let errorMessage {
+                            HStack(spacing: 10) {
+                                Image(systemName: "exclamationmark.circle")
+                                    .foregroundStyle(.red)
+                                Text(errorMessage)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .background(Color(.systemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+
+                        Button {
+                            Task {
+                                let didSave = await onSave(username, displayName, bio)
+                                if didSave {
+                                    dismiss()
+                                }
+                            }
+                        } label: {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(canSave ? Color.black : Color(.tertiarySystemFill))
+                                    .frame(height: 50)
+
+                                if isSaving {
+                                    ProgressView()
+                                        .tint(.white)
+                                } else {
+                                    Text("Save")
+                                        .font(.system(size: 17, weight: .medium))
+                                        .foregroundStyle(canSave ? .white : .secondary)
+                                }
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .disabled(!canSave || isSaving)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 24)
+                }
             }
-            throw error
+            .navigationTitle("Edit Account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
         }
+    }
+
+    private var canSave: Bool {
+        !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func inputRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 16) {
+            Text(title)
+                .font(.system(size: 16))
+                .foregroundStyle(.secondary)
+                .frame(width: 78, alignment: .leading)
+
+            content()
+                .font(.system(size: 16))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
     }
 }
