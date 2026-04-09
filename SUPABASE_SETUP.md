@@ -38,6 +38,12 @@ Use the SQL editor in Supabase and run the files in this order:
 2. `supabase/002_indexes.sql`
 3. `supabase/003_rls.sql`
 4. `supabase/004_storage.sql`
+5. `supabase/005_auth_profile_trigger.sql`
+
+Important:
+- `005_auth_profile_trigger.sql` is required for reliable signup
+- it automatically creates the matching `profiles` row whenever a new auth user is created
+- it also backfills any existing auth users who are missing a profile row
 
 ## 4. Create storage buckets
 
