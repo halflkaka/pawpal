@@ -1,19 +1,35 @@
 # PetHealth Database Schema (Proposed)
 
+## Design Rule
+
+- `profiles` = lightweight account identity
+- `pets` = rich public social identity
+
+The app should stay pet-first. Human accounts exist for login, ownership, search, and trust. Pets carry most of the expressive public identity.
+
 ## 1. profiles
 
-Represents the app-level user profile tied to Supabase auth.
+Represents the app-level user account tied to Supabase auth.
 
 ```sql
 create table profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  username text unique,
+  username text not null unique,
   display_name text,
-  bio text,
   avatar_url text,
-  created_at timestamptz not null default now()
+  bio text,
+  location_text text,
+  privacy_level text not null default 'public',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 ```
+
+### Notes
+- `email` should stay in Supabase auth, not duplicated in `profiles`
+- `username` is the stable searchable identity
+- `display_name` is the softer human-facing label
+- keep human profiles intentionally lightweight
 
 ## 2. pets
 
@@ -22,16 +38,26 @@ create table pets (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references profiles(id) on delete cascade,
   name text not null,
+  avatar_url text,
   species text,
   breed text,
-  age text,
+  sex text,
+  birthday date,
+  age_text text,
   weight text,
+  bio text,
   notes text,
-  avatar_url text,
+  home_city text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 ```
+
+### Notes
+- `bio` = public pet intro
+- `notes` = owner-facing private or practical notes
+- `age_text` supports pets with unknown exact birthday
+- pets should be richer than user accounts because they are the visible social actors
 
 ## 3. posts
 

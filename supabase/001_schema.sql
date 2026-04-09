@@ -2,23 +2,30 @@ create extension if not exists pgcrypto;
 
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  username text unique,
+  username text not null unique,
   display_name text,
-  bio text,
   avatar_url text,
-  created_at timestamptz not null default now()
+  bio text,
+  location_text text,
+  privacy_level text not null default 'public',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists pets (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references profiles(id) on delete cascade,
   name text not null,
+  avatar_url text,
   species text,
   breed text,
-  age text,
+  sex text,
+  birthday date,
+  age_text text,
   weight text,
+  bio text,
   notes text,
-  avatar_url text,
+  home_city text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
