@@ -17,17 +17,18 @@ struct AuthView: View {
                     Spacer(minLength: 32)
 
                     VStack(spacing: 14) {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .fill(Color(.secondarySystemBackground))
-                            .frame(width: 72, height: 72)
+                            .frame(width: 76, height: 76)
                             .overlay {
                                 Image(systemName: "pawprint.fill")
-                                    .font(.system(size: 28))
+                                    .font(.system(size: 28, weight: .medium))
                                     .foregroundStyle(.gray)
                             }
 
                         Text("PetHealth")
-                            .font(.system(size: 28, weight: .semibold))
+                            .font(.system(size: 30, weight: .semibold))
+                            .tracking(-0.5)
 
                         Text(isRegisterMode ? "Set up your account" : "Sign in to continue")
                             .font(.system(size: 14))
@@ -62,57 +63,35 @@ struct AuthView: View {
                         }
                     }
                     .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .padding(.horizontal, 16)
 
                     if let errorMessage = authManager.errorMessage {
-                        HStack(spacing: 10) {
-                            Image(systemName: "exclamationmark.circle")
-                                .foregroundStyle(.red)
-                            Text(errorMessage)
-                                .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(Color(.systemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .padding(.horizontal, 16)
-                        .padding(.top, 10)
+                        feedbackCard(icon: "exclamationmark.circle", text: errorMessage, tint: .red)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 10)
                     }
 
                     if authManager.isLoading && authManager.errorMessage == nil {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text(isRegisterMode ? "Creating account" : "Signing in")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(Color(.systemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .padding(.horizontal, 16)
-                        .padding(.top, 10)
+                        feedbackCard(icon: nil, text: isRegisterMode ? "Creating account" : "Signing in", tint: .secondary, showsProgress: true)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 10)
                     }
 
                     Button {
                         submit()
                     } label: {
                         ZStack {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(buttonEnabled ? Color.green : Color(.tertiarySystemFill))
-                                .frame(height: 50)
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(buttonEnabled ? Color.black : Color(.tertiarySystemFill))
+                                .frame(height: 52)
 
                             if authManager.isLoading {
                                 ProgressView()
                                     .tint(.white)
                             } else {
                                 Text(isRegisterMode ? "Create Account" : "Sign In")
-                                    .font(.system(size: 17, weight: .medium))
+                                    .font(.system(size: 17, weight: .semibold))
                                     .foregroundColor(buttonEnabled ? .white : .secondary)
                             }
                         }
@@ -127,7 +106,7 @@ struct AuthView: View {
                         password = ""
                         focusedField = .email
                     }
-                    .font(.system(size: 16))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.secondary)
                     .padding(.top, 18)
                     .disabled(authManager.isLoading)
@@ -188,6 +167,27 @@ struct AuthView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 16)
+    }
+
+    private func feedbackCard(icon: String?, text: String, tint: Color, showsProgress: Bool = false) -> some View {
+        HStack(spacing: 10) {
+            if showsProgress {
+                ProgressView()
+                    .controlSize(.small)
+            } else if let icon {
+                Image(systemName: icon)
+                    .foregroundStyle(tint)
+            }
+
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private enum Field {
