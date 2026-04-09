@@ -5,7 +5,7 @@ struct AuthView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var isRegisterMode = false
-    @State private var isSubmitting = false
+    @FocusState private var focusedField: Field?
 
     var body: some View {
         NavigationStack {
@@ -39,13 +39,26 @@ struct AuthView: View {
                         inputRow(title: "Email") {
                             TextField("name@example.com", text: $email)
                                 .textInputAutocapitalization(.never)
+                                .keyboardType(.emailAddress)
                                 .autocorrectionDisabled()
+                                .textContentType(.username)
+                                .submitLabel(.next)
+                                .focused($focusedField, equals: .email)
+                                .onSubmit {
+                                    focusedField = .password
+                                }
                         }
 
                         Divider().padding(.leading, 16)
 
                         inputRow(title: "Password") {
                             SecureField("Enter password", text: $password)
+                                .textContentType(isRegisterMode ? .newPassword : .password)
+                                .submitLabel(.go)
+                                .focused($focusedField, equals: .password)
+                                .onSubmit {
+                                    submit()
+                                }
                         }
                     }
                     .background(Color(.systemBackground))
@@ -69,7 +82,7 @@ struct AuthView: View {
                         .padding(.top, 10)
                     }
 
-                    if isSubmitting && authManager.errorMessage == nil {
+                    if authManager.isLoading && authManager.errorMessage == nil {
                         HStack(spacing: 10) {
                             ProgressView()
                                 .controlSize(.small)
@@ -87,14 +100,7 @@ struct AuthView: View {
                     }
 
                     Button {
-                        isSubmitting = true
-                        Task {
-                            if isRegisterMode {
-                                await authManager.register(email: email, password: password)
-                            } else {
-                                await authManager.signIn(email: email, password: password)
-                            }
-                        }
+                        submit()
                     } label: {
                         ZStack {
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -111,46 +117,63 @@ struct AuthView: View {
                             }
                         }
                     }
-                    .disabled(!buttonEnabled || authManager.isLoading)
+                    .disabled(!buttonEnabled)
                     .padding(.horizontal, 16)
                     .padding(.top, 20)
 
                     Button(isRegisterMode ? "Sign In Instead" : "Create Account Instead") {
                         isRegisterMode.toggle()
                         authManager.clearError()
-                        isSubmitting = false
+                        password = ""
+                        focusedField = .email
                     }
                     .font(.system(size: 16))
                     .foregroundStyle(.secondary)
                     .padding(.top, 18)
+                    .disabled(authManager.isLoading)
 
                     Spacer()
                 }
             }
             .navigationBarHidden(true)
         }
+        .onAppear {
+            focusedField = .email
+        }
         .onChange(of: email) { _, _ in
             authManager.clearError()
-            isSubmitting = false
         }
         .onChange(of: password) { _, _ in
             authManager.clearError()
-            isSubmitting = false
-        }
-        .onChange(of: authManager.errorMessage) { _, newValue in
-            if newValue != nil {
-                isSubmitting = false
-            }
         }
         .onChange(of: authManager.currentUser?.id) { _, newValue in
             if newValue != nil {
-                isSubmitting = false
+                focusedField = nil
             }
         }
     }
 
+    private var normalizedEmail: String {
+        email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     private var buttonEnabled: Bool {
-        !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty
+        !normalizedEmail.isEmpty && !password.isEmpty && !authManager.isLoading
+    }
+
+    private func submit() {
+        guard buttonEnabled else { return }
+
+        focusedField = nil
+        authManager.clearError()
+
+        Task {
+            if isRegisterMode {
+                await authManager.register(email: normalizedEmail, password: password)
+            } else {
+                await authManager.signIn(email: normalizedEmail, password: password)
+            }
+        }
     }
 
     private func inputRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -165,5 +188,10 @@ struct AuthView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 16)
+    }
+
+    private enum Field {
+        case email
+        case password
     }
 }
