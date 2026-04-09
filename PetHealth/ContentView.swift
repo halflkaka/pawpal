@@ -20,6 +20,8 @@ struct ContentView: View {
                     petLoadErrorView(message: petsError)
                 } else if shouldShowFirstPetSetup, let user = authManager.currentUser {
                     FirstPetSetupView(user: user) { pet in
+                        petsService.pets = [pet]
+                        petsService.errorMessage = nil
                         activePetID = pet.id.uuidString
                         hasCheckedPets = true
                         isEnteringFirstPetFlow = false
