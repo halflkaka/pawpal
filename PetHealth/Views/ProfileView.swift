@@ -8,6 +8,8 @@ struct ProfileView: View {
     @State private var showingAddPet = false
     @State private var editingPet: RemotePet?
     @State private var isSavingPet = false
+    @State private var pendingDeletePet: RemotePet?
+    @State private var statusMessage: String?
 
     private var activePet: RemotePet? {
         if let match = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
@@ -75,8 +77,31 @@ struct ProfileView: View {
                 updatedPet.weight = weight
                 updatedPet.notes = notes
                 await petsService.updatePet(updatedPet, for: user.id)
-                return petsService.errorMessage == nil
+                if petsService.errorMessage == nil {
+                    statusMessage = "Pet updated"
+                    return true
+                }
+                return false
             }
+        }
+        .alert("Delete Pet?", isPresented: deleteAlertBinding, presenting: pendingDeletePet) { pet in
+            Button("Delete", role: .destructive) {
+                Task {
+                    let deletingActive = pet.id.uuidString == activePetID
+                    await petsService.deletePet(pet.id, for: user.id)
+                    if petsService.errorMessage == nil {
+                        if deletingActive {
+                            activePetID = petsService.pets.first?.id.uuidString ?? ""
+                        }
+                        statusMessage = "Pet deleted"
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeletePet = nil
+            }
+        } message: { pet in
+            Text("Delete \(pet.name)? This can’t be undone.")
         }
     }
 
@@ -142,6 +167,7 @@ struct ProfileView: View {
                     ForEach(petsService.pets) { pet in
                         Button(pet.name) {
                             activePetID = pet.id.uuidString
+                            statusMessage = "Active pet updated"
                         }
                     }
                 } label: {
@@ -164,7 +190,20 @@ struct ProfileView: View {
                 .buttonStyle(.plain)
             }
 
-            if let errorMessage = petsService.errorMessage {
+            if let statusMessage {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(.green)
+                    Text(statusMessage)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else if let errorMessage = petsService.errorMessage {
                 HStack(spacing: 10) {
                     Image(systemName: "exclamationmark.circle")
                         .foregroundStyle(.red)
@@ -268,6 +307,7 @@ struct ProfileView: View {
             Menu {
                 Button("Set Active") {
                     activePetID = pet.id.uuidString
+                    statusMessage = "Active pet updated"
                 }
 
                 Button("Edit") {
@@ -275,13 +315,7 @@ struct ProfileView: View {
                 }
 
                 Button("Delete", role: .destructive) {
-                    Task {
-                        let deletingActive = pet.id.uuidString == activePetID
-                        await petsService.deletePet(pet.id, for: user.id)
-                        if deletingActive {
-                            activePetID = petsService.pets.first?.id.uuidString ?? ""
-                        }
-                    }
+                    pendingDeletePet = pet
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -319,6 +353,17 @@ struct ProfileView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+
+    private var deleteAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeletePet != nil },
+            set: { newValue in
+                if !newValue {
+                    pendingDeletePet = nil
+                }
+            }
+        )
     }
 
     private func sectionLabel(_ text: String) -> some View {
