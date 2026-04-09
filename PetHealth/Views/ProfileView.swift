@@ -7,6 +7,7 @@ struct ProfileView: View {
     @StateObject private var petsService = PetsService()
     @State private var showingAddPet = false
     @State private var editingPet: RemotePet?
+    @State private var isSavingPet = false
 
     private var activePet: RemotePet? {
         if let match = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
@@ -43,29 +44,38 @@ struct ProfileView: View {
             await petsService.loadPets(for: user.id)
         }
         .sheet(isPresented: $showingAddPet) {
-            ProfilePetEditorSheet(title: "Add Pet", pet: nil) { name, species, breed, age, weight, notes in
-                Task {
-                    await petsService.addPet(for: user.id, name: name, species: species, breed: breed, age: age, weight: weight, notes: notes)
-                    if let selected = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
-                        activePetID = selected.id.uuidString
-                    } else if let firstPet = petsService.pets.first {
-                        activePetID = firstPet.id.uuidString
-                    }
+            ProfilePetEditorSheet(title: "Add Pet", pet: nil, isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, age, weight, notes in
+                guard !isSavingPet else { return false }
+                isSavingPet = true
+                defer { isSavingPet = false }
+
+                let savedPet = await petsService.addPet(for: user.id, name: name, species: species, breed: breed, age: age, weight: weight, notes: notes)
+                guard savedPet != nil else { return false }
+
+                if let selected = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
+                    activePetID = selected.id.uuidString
+                } else if let firstPet = petsService.pets.first {
+                    activePetID = firstPet.id.uuidString
                 }
+
+                return true
             }
         }
         .sheet(item: $editingPet) { pet in
-            ProfilePetEditorSheet(title: "Edit Pet", pet: pet) { name, species, breed, age, weight, notes in
-                Task {
-                    var updatedPet = pet
-                    updatedPet.name = name
-                    updatedPet.species = species
-                    updatedPet.breed = breed
-                    updatedPet.age = age
-                    updatedPet.weight = weight
-                    updatedPet.notes = notes
-                    await petsService.updatePet(updatedPet, for: user.id)
-                }
+            ProfilePetEditorSheet(title: "Edit Pet", pet: pet, isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, age, weight, notes in
+                guard !isSavingPet else { return false }
+                isSavingPet = true
+                defer { isSavingPet = false }
+
+                var updatedPet = pet
+                updatedPet.name = name
+                updatedPet.species = species
+                updatedPet.breed = breed
+                updatedPet.age = age
+                updatedPet.weight = weight
+                updatedPet.notes = notes
+                await petsService.updatePet(updatedPet, for: user.id)
+                return petsService.errorMessage == nil
             }
         }
     }
@@ -375,10 +385,14 @@ private struct ProfilePetEditorSheet: View {
     @State private var notes: String
 
     let title: String
-    let onSave: (String, String, String, String, String, String) -> Void
+    let isSaving: Bool
+    let errorMessage: String?
+    let onSave: (String, String, String, String, String, String) async -> Bool
 
-    init(title: String, pet: RemotePet?, onSave: @escaping (String, String, String, String, String, String) -> Void) {
+    init(title: String, pet: RemotePet?, isSaving: Bool, errorMessage: String?, onSave: @escaping (String, String, String, String, String, String) async -> Bool) {
         self.title = title
+        self.isSaving = isSaving
+        self.errorMessage = errorMessage
         self.onSave = onSave
         _name = State(initialValue: pet?.name ?? "")
         _species = State(initialValue: pet?.species?.isEmpty == false ? pet?.species ?? "Dog" : "Dog")
@@ -454,17 +468,46 @@ private struct ProfilePetEditorSheet: View {
                         .background(Color(.systemBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                        Button("Save") {
-                            onSave(name, species, breed, age, weight, notes)
-                            dismiss()
+                        if let errorMessage {
+                            HStack(spacing: 10) {
+                                Image(systemName: "exclamationmark.circle")
+                                    .foregroundStyle(.red)
+                                Text(errorMessage)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .background(Color(.systemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(canSave ? .white : .secondary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(canSave ? Color.green : Color(.tertiarySystemFill))
+
+                        Button {
+                            Task {
+                                let didSave = await onSave(name, species, breed, age, weight, notes)
+                                if didSave {
+                                    dismiss()
+                                }
+                            }
+                        } label: {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(canSave ? Color.green : Color(.tertiarySystemFill))
+                                    .frame(height: 50)
+
+                                if isSaving {
+                                    ProgressView()
+                                        .tint(.white)
+                                } else {
+                                    Text("Save")
+                                        .font(.system(size: 17, weight: .medium))
+                                        .foregroundStyle(canSave ? .white : .secondary)
+                                }
+                            }
+                        }
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .disabled(!canSave)
+                        .disabled(!canSave || isSaving)
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 24)
