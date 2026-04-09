@@ -28,6 +28,10 @@ struct AuthView: View {
 
                         Text("PetHealth")
                             .font(.system(size: 28, weight: .semibold))
+
+                        Text(isRegisterMode ? "Set up your account" : "Sign in to continue")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.bottom, 28)
 
@@ -111,9 +115,10 @@ struct AuthView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 20)
 
-                    Button(isRegisterMode ? "Sign In" : "Create Account") {
+                    Button(isRegisterMode ? "Sign In Instead" : "Create Account Instead") {
                         isRegisterMode.toggle()
                         authManager.clearError()
+                        isSubmitting = false
                     }
                     .font(.system(size: 16))
                     .foregroundStyle(.secondary)

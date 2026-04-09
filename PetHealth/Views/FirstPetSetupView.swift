@@ -30,7 +30,7 @@ struct FirstPetSetupView: View {
                         Text("Create your first pet")
                             .font(.system(size: 24, weight: .semibold))
 
-                        Text("This will be your active pet.")
+                        Text("This will be your active pet")
                             .font(.system(size: 14))
                             .foregroundStyle(.secondary)
                     }
@@ -62,6 +62,22 @@ struct FirstPetSetupView: View {
                     .background(Color(.systemBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .padding(.horizontal, 16)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Optional")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.secondary)
+
+                        Text("You can add more details later in Profile.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
 
                     if let errorMessage = petsService.errorMessage {
                         HStack(spacing: 10) {
