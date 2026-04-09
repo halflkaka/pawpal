@@ -153,7 +153,7 @@ struct FirstPetSetupView: View {
         petsService.errorMessage = nil
         defer { isSaving = false }
 
-        await petsService.addPet(
+        guard let pet = await petsService.addPet(
             for: user.id,
             name: name,
             species: species,
@@ -161,13 +161,9 @@ struct FirstPetSetupView: View {
             age: age,
             weight: weight,
             notes: notes
-        )
-
-        await petsService.loadPets(for: user.id)
-
-        guard let pet = petsService.pets.first else {
+        ) else {
             if petsService.errorMessage == nil {
-                petsService.errorMessage = "Could not load the pet after saving. Please try again."
+                petsService.errorMessage = "Could not save your pet. Please try again."
             }
             return
         }

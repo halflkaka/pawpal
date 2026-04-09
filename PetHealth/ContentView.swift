@@ -14,6 +14,8 @@ struct ContentView: View {
                     launchScreen
                 } else if authManager.currentUser == nil {
                     AuthView(authManager: authManager)
+                } else if !hasCheckedPets {
+                    transitionOverlay(label: "Preparing your pet profile")
                 } else if shouldShowFirstPetSetup, let user = authManager.currentUser {
                     FirstPetSetupView(user: user) { pet in
                         activePetID = pet.id.uuidString
@@ -43,6 +45,8 @@ struct ContentView: View {
                 isEnteringFirstPetFlow = false
                 return
             }
+            hasCheckedPets = false
+            isEnteringFirstPetFlow = true
             await petsService.loadPets(for: user.id)
             if activePetID.isEmpty, let firstPet = petsService.pets.first {
                 activePetID = firstPet.id.uuidString

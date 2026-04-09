@@ -35,7 +35,7 @@ final class PetsService: ObservableObject {
         }
     }
 
-    func addPet(for userID: UUID, name: String, species: String, breed: String, age: String, weight: String, notes: String) async {
+    func addPet(for userID: UUID, name: String, species: String, breed: String, age: String, weight: String, notes: String) async -> RemotePet? {
         struct NewPet: Encodable {
             let owner_user_id: UUID
             let name: String
@@ -56,14 +56,22 @@ final class PetsService: ObservableObject {
             notes: notes
         )
 
+        errorMessage = nil
+
         do {
-            try await client
+            let pet: RemotePet = try await client
                 .from("pets")
                 .insert(payload)
+                .select()
+                .single()
                 .execute()
-            await loadPets(for: userID)
+                .value
+
+            pets = [pet] + pets.filter { $0.id != pet.id }
+            return pet
         } catch {
             errorMessage = error.localizedDescription
+            return nil
         }
     }
 
