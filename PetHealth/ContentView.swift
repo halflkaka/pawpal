@@ -7,20 +7,28 @@ struct ContentView: View {
     @State private var hasCheckedPets = false
 
     var body: some View {
-        Group {
-            if authManager.isRestoringSession {
-                launchScreen
-            } else if authManager.currentUser == nil {
-                AuthView(authManager: authManager)
-            } else if shouldShowFirstPetSetup, let user = authManager.currentUser {
-                FirstPetSetupView(user: user) { pet in
-                    activePetID = pet.id.uuidString
-                    hasCheckedPets = true
+        ZStack {
+            Group {
+                if authManager.isRestoringSession {
+                    launchScreen
+                } else if authManager.currentUser == nil {
+                    AuthView(authManager: authManager)
+                } else if shouldShowFirstPetSetup, let user = authManager.currentUser {
+                    FirstPetSetupView(user: user) { pet in
+                        activePetID = pet.id.uuidString
+                        hasCheckedPets = true
+                    }
+                } else {
+                    MainTabView(authManager: authManager)
                 }
-            } else {
-                MainTabView(authManager: authManager)
+            }
+
+            if authManager.isSigningOut {
+                transitionOverlay(label: "Signing out")
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: authManager.currentUser?.id)
+        .animation(.easeInOut(duration: 0.2), value: authManager.isSigningOut)
         .task {
             await authManager.restoreSession()
         }
@@ -43,6 +51,10 @@ struct ContentView: View {
     }
 
     private var launchScreen: some View {
+        transitionOverlay(label: nil)
+    }
+
+    private func transitionOverlay(label: String?) -> some View {
         ZStack {
             Color(.systemGroupedBackground)
                 .ignoresSafeArea()
@@ -59,6 +71,12 @@ struct ContentView: View {
 
                 ProgressView()
                     .tint(.secondary)
+
+                if let label {
+                    Text(label)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }

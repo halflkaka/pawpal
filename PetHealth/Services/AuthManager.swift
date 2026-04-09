@@ -7,6 +7,7 @@ final class AuthManager {
     var currentUser: AppUser?
     var isLoading = false
     var isRestoringSession = false
+    var isSigningOut = false
     var errorMessage: String?
 
     private let authService: AuthService
@@ -52,7 +53,17 @@ final class AuthManager {
     }
 
     func signOut() {
+        guard !isSigningOut else { return }
+        isSigningOut = true
+        errorMessage = nil
+
         Task {
+            defer {
+                Task { @MainActor in
+                    isSigningOut = false
+                }
+            }
+
             do {
                 try await authService.signOut()
                 await MainActor.run {
