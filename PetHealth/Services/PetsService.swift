@@ -67,6 +67,39 @@ final class PetsService: ObservableObject {
         }
     }
 
+    func updatePet(_ pet: RemotePet, for userID: UUID) async {
+        struct PetUpdate: Encodable {
+            let name: String
+            let species: String
+            let breed: String
+            let age: String
+            let weight: String
+            let notes: String
+        }
+
+        errorMessage = nil
+
+        let payload = PetUpdate(
+            name: pet.name,
+            species: pet.species ?? "",
+            breed: pet.breed ?? "",
+            age: pet.age ?? "",
+            weight: pet.weight ?? "",
+            notes: pet.notes ?? ""
+        )
+
+        do {
+            try await client
+                .from("pets")
+                .update(payload)
+                .eq("id", value: pet.id.uuidString)
+                .execute()
+            await loadPets(for: userID)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func deletePet(_ petID: UUID, for userID: UUID) async {
         errorMessage = nil
 

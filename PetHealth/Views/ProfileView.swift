@@ -6,6 +6,7 @@ struct ProfileView: View {
     @AppStorage("activePetID") private var activePetID = ""
     @StateObject private var petsService = PetsService()
     @State private var showingAddPet = false
+    @State private var editingPet: RemotePet?
 
     private var activePet: RemotePet? {
         if let match = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
@@ -36,7 +37,7 @@ struct ProfileView: View {
             }
         }
         .sheet(isPresented: $showingAddPet) {
-            ProfileAddPetSheet { name, species, breed, age, weight, notes in
+            ProfilePetEditorSheet(title: "Add Pet", pet: nil) { name, species, breed, age, weight, notes in
                 Task {
                     await petsService.addPet(for: user.id, name: name, species: species, breed: breed, age: age, weight: weight, notes: notes)
                     if let selected = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
@@ -44,6 +45,20 @@ struct ProfileView: View {
                     } else if let firstPet = petsService.pets.first {
                         activePetID = firstPet.id.uuidString
                     }
+                }
+            }
+        }
+        .sheet(item: $editingPet) { pet in
+            ProfilePetEditorSheet(title: "Edit Pet", pet: pet) { name, species, breed, age, weight, notes in
+                Task {
+                    var updatedPet = pet
+                    updatedPet.name = name
+                    updatedPet.species = species
+                    updatedPet.breed = breed
+                    updatedPet.age = age
+                    updatedPet.weight = weight
+                    updatedPet.notes = notes
+                    await petsService.updatePet(updatedPet, for: user.id)
                 }
             }
         }
@@ -70,6 +85,26 @@ struct ProfileView: View {
                 }
 
                 Spacer()
+            }
+
+            if let activePet {
+                Button {
+                    editingPet = activePet
+                } label: {
+                    HStack {
+                        Text("Edit Pet")
+                        Spacer()
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 14))
+                    }
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
             }
 
             if !petsService.pets.isEmpty {
@@ -181,6 +216,10 @@ struct ProfileView: View {
                     activePetID = pet.id.uuidString
                 }
 
+                Button("Edit") {
+                    editingPet = pet
+                }
+
                 Button("Delete", role: .destructive) {
                     Task {
                         let deletingActive = pet.id.uuidString == activePetID
@@ -275,16 +314,28 @@ struct ProfileView: View {
     }
 }
 
-private struct ProfileAddPetSheet: View {
+private struct ProfilePetEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var species = "Dog"
-    @State private var breed = ""
-    @State private var age = ""
-    @State private var weight = ""
-    @State private var notes = ""
+    @State private var name: String
+    @State private var species: String
+    @State private var breed: String
+    @State private var age: String
+    @State private var weight: String
+    @State private var notes: String
 
+    let title: String
     let onSave: (String, String, String, String, String, String) -> Void
+
+    init(title: String, pet: RemotePet?, onSave: @escaping (String, String, String, String, String, String) -> Void) {
+        self.title = title
+        self.onSave = onSave
+        _name = State(initialValue: pet?.name ?? "")
+        _species = State(initialValue: pet?.species?.isEmpty == false ? pet?.species ?? "Dog" : "Dog")
+        _breed = State(initialValue: pet?.breed ?? "")
+        _age = State(initialValue: pet?.age ?? "")
+        _weight = State(initialValue: pet?.weight ?? "")
+        _notes = State(initialValue: pet?.notes ?? "")
+    }
 
     var body: some View {
         NavigationStack {
@@ -301,7 +352,7 @@ private struct ProfileAddPetSheet: View {
                 TextField("Notes", text: $notes, axis: .vertical)
                     .lineLimit(3...6)
             }
-            .navigationTitle("Add Pet")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
