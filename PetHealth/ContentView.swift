@@ -5,6 +5,7 @@ struct ContentView: View {
     @AppStorage("activePetID") private var activePetID = ""
     @StateObject private var petsService = PetsService()
     @State private var hasCheckedPets = false
+    @State private var isEnteringFirstPetFlow = false
 
     var body: some View {
         ZStack {
@@ -17,6 +18,7 @@ struct ContentView: View {
                     FirstPetSetupView(user: user) { pet in
                         activePetID = pet.id.uuidString
                         hasCheckedPets = true
+                        isEnteringFirstPetFlow = false
                     }
                 } else {
                     MainTabView(authManager: authManager)
@@ -25,16 +27,20 @@ struct ContentView: View {
 
             if authManager.isSigningOut {
                 transitionOverlay(label: "Signing out")
+            } else if isEnteringFirstPetFlow {
+                transitionOverlay(label: "Preparing your pet profile")
             }
         }
         .animation(.easeInOut(duration: 0.2), value: authManager.currentUser?.id)
         .animation(.easeInOut(duration: 0.2), value: authManager.isSigningOut)
+        .animation(.easeInOut(duration: 0.2), value: isEnteringFirstPetFlow)
         .task {
             await authManager.restoreSession()
         }
         .task(id: authManager.currentUser?.id) {
             guard let user = authManager.currentUser else {
                 hasCheckedPets = false
+                isEnteringFirstPetFlow = false
                 return
             }
             await petsService.loadPets(for: user.id)
@@ -42,6 +48,7 @@ struct ContentView: View {
                 activePetID = firstPet.id.uuidString
             }
             hasCheckedPets = true
+            isEnteringFirstPetFlow = petsService.pets.isEmpty
         }
     }
 

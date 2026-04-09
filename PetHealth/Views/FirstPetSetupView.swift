@@ -64,12 +64,37 @@ struct FirstPetSetupView: View {
                     .padding(.horizontal, 16)
 
                     if let errorMessage = petsService.errorMessage {
-                        Text(errorMessage)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 20)
-                            .padding(.top, 10)
+                        HStack(spacing: 10) {
+                            Image(systemName: "exclamationmark.circle")
+                                .foregroundStyle(.red)
+                            Text(errorMessage)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(Color(.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
+                    }
+
+                    if isSaving && petsService.errorMessage == nil {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Finishing setup")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(Color(.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
                     }
 
                     Button {
