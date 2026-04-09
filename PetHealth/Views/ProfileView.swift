@@ -17,9 +17,12 @@ struct ProfileView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(alignment: .leading, spacing: 22) {
+                sectionLabel("Pet")
                 petHero
                 petsSection
+
+                sectionLabel("Account")
                 accountSection
                 signOutSection
             }
@@ -35,6 +38,9 @@ struct ProfileView: View {
             if activePetID.isEmpty, let firstPet = petsService.pets.first {
                 activePetID = firstPet.id.uuidString
             }
+        }
+        .refreshable {
+            await petsService.loadPets(for: user.id)
         }
         .sheet(isPresented: $showingAddPet) {
             ProfilePetEditorSheet(title: "Add Pet", pet: nil) { name, species, breed, age, weight, notes in
@@ -87,6 +93,20 @@ struct ProfileView: View {
                 Spacer()
             }
 
+            if petsService.isLoading && petsService.pets.isEmpty {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading pets")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
             if let activePet {
                 Button {
                     editingPet = activePet
@@ -133,6 +153,21 @@ struct ProfileView: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            if let errorMessage = petsService.errorMessage {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.circle")
+                        .foregroundStyle(.red)
+                    Text(errorMessage)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -154,7 +189,16 @@ struct ProfileView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
 
-            if petsService.pets.isEmpty {
+            if petsService.pets.isEmpty, petsService.isLoading {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading pets")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+            } else if petsService.pets.isEmpty {
                 HStack {
                     Text("No pets")
                         .foregroundStyle(.secondary)
@@ -265,6 +309,13 @@ struct ProfileView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
     }
 
     private func accountRow(title: String, value: String) -> some View {
