@@ -5,6 +5,7 @@ struct AuthView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var isRegisterMode = false
+    @State private var isSubmitting = false
 
     var body: some View {
         NavigationStack {
@@ -48,15 +49,41 @@ struct AuthView: View {
                     .padding(.horizontal, 16)
 
                     if let errorMessage = authManager.errorMessage {
-                        Text(errorMessage)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 20)
-                            .padding(.top, 10)
+                        HStack(spacing: 10) {
+                            Image(systemName: "exclamationmark.circle")
+                                .foregroundStyle(.red)
+                            Text(errorMessage)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(Color(.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
+                    }
+
+                    if isSubmitting && authManager.errorMessage == nil {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(isRegisterMode ? "Creating account" : "Signing in")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(Color(.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
                     }
 
                     Button {
+                        isSubmitting = true
                         Task {
                             if isRegisterMode {
                                 await authManager.register(email: email, password: password)
@@ -97,8 +124,24 @@ struct AuthView: View {
             }
             .navigationBarHidden(true)
         }
-        .onChange(of: email) { _, _ in authManager.clearError() }
-        .onChange(of: password) { _, _ in authManager.clearError() }
+        .onChange(of: email) { _, _ in
+            authManager.clearError()
+            isSubmitting = false
+        }
+        .onChange(of: password) { _, _ in
+            authManager.clearError()
+            isSubmitting = false
+        }
+        .onChange(of: authManager.errorMessage) { _, newValue in
+            if newValue != nil {
+                isSubmitting = false
+            }
+        }
+        .onChange(of: authManager.currentUser?.id) { _, newValue in
+            if newValue != nil {
+                isSubmitting = false
+            }
+        }
     }
 
     private var buttonEnabled: Bool {
