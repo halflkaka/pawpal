@@ -56,9 +56,9 @@ struct RemotePetsView: View {
             await petsService.loadPets(for: user.id)
         }
         .sheet(isPresented: $showingAddPet) {
-            RemoteAddPetSheet { name, species, breed, sex, age, weight, bio, notes in
+            RemoteAddPetSheet { name, species, breed, sex, age, weight, homeCity, bio in
                 Task {
-                    await petsService.addPet(for: user.id, name: name, species: species, breed: breed, sex: sex, age: age, weight: weight, bio: bio, notes: notes)
+                    await petsService.addPet(for: user.id, name: name, species: species, breed: breed, sex: sex, age: age, weight: weight, homeCity: homeCity, bio: bio)
                 }
             }
         }
@@ -97,7 +97,7 @@ struct RemotePetsView: View {
                 Text(pet.name)
                     .font(.system(size: 16, weight: .medium))
 
-                let detail = [pet.species, pet.breed, pet.age]
+                let detail = [pet.species, pet.breed, pet.age, pet.home_city]
                     .compactMap { $0 }
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty }
@@ -131,8 +131,8 @@ private struct RemoteAddPetSheet: View {
     @State private var sex = ""
     @State private var age = ""
     @State private var weight = ""
+    @State private var homeCity = ""
     @State private var bio = ""
-    @State private var notes = ""
 
     let onSave: (String, String, String, String, String, String, String, String) -> Void
 
@@ -153,10 +153,9 @@ private struct RemoteAddPetSheet: View {
                 }
                 TextField("Age", text: $age)
                 TextField("Weight", text: $weight)
+                TextField("Home City", text: $homeCity)
                 TextField("Bio", text: $bio, axis: .vertical)
                     .lineLimit(2...4)
-                TextField("Notes", text: $notes, axis: .vertical)
-                    .lineLimit(3...6)
             }
             .navigationTitle("Add Pet")
             .navigationBarTitleDisplayMode(.inline)
@@ -166,7 +165,7 @@ private struct RemoteAddPetSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        onSave(name, species, breed, sex, age, weight, bio, notes)
+                        onSave(name, species, breed, sex, age, weight, homeCity, bio)
                         dismiss()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

@@ -35,7 +35,7 @@ final class PetsService: ObservableObject {
         }
     }
 
-    func addPet(for userID: UUID, name: String, species: String, breed: String, sex: String, age: String, weight: String, homeCity: String, bio: String, notes: String) async -> RemotePet? {
+    func addPet(for userID: UUID, name: String, species: String, breed: String, sex: String, age: String, weight: String, homeCity: String, bio: String) async -> RemotePet? {
         struct NewPet: Encodable {
             let owner_user_id: UUID
             let name: String
@@ -46,7 +46,6 @@ final class PetsService: ObservableObject {
             let weight: String
             let home_city: String
             let bio: String
-            let notes: String
         }
 
         let payload = NewPet(
@@ -58,8 +57,7 @@ final class PetsService: ObservableObject {
             age_text: age,
             weight: weight,
             home_city: homeCity,
-            bio: bio,
-            notes: notes
+            bio: bio
         )
 
         errorMessage = nil
@@ -91,7 +89,6 @@ final class PetsService: ObservableObject {
             let weight: String
             let home_city: String
             let bio: String
-            let notes: String
         }
 
         errorMessage = nil
@@ -104,8 +101,7 @@ final class PetsService: ObservableObject {
             age_text: pet.age ?? "",
             weight: pet.weight ?? "",
             home_city: pet.home_city ?? "",
-            bio: pet.bio ?? "",
-            notes: pet.notes ?? ""
+            bio: pet.bio ?? ""
         )
 
         do {

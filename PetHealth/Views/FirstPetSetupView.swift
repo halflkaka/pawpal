@@ -11,8 +11,8 @@ struct FirstPetSetupView: View {
     @State private var sex = ""
     @State private var age = ""
     @State private var weight = ""
+    @State private var homeCity = ""
     @State private var bio = ""
-    @State private var notes = ""
     @State private var isSaving = false
     @State private var isCompleting = false
     @State private var currentStep = 0
@@ -147,6 +147,14 @@ struct FirstPetSetupView: View {
                 }
             case 6:
                 stepScaffold(
+                    eyebrow: "Home city",
+                    title: "Where do they call home?",
+                    subtitle: "Optional, just the city is enough."
+                ) {
+                    refinedTextField(text: $homeCity, placeholder: "San Francisco")
+                }
+            case 7:
+                stepScaffold(
                     eyebrow: "Bio",
                     title: "How would you describe them?",
                     subtitle: "Optional, keep it short and warm."
@@ -154,13 +162,7 @@ struct FirstPetSetupView: View {
                     bioEditor
                 }
             default:
-                stepScaffold(
-                    eyebrow: "Notes",
-                    title: "Anything else to remember?",
-                    subtitle: "Optional notes for now."
-                ) {
-                    notesEditor
-                }
+                EmptyView()
             }
         }
         .contentShape(Rectangle())
@@ -315,31 +317,6 @@ struct FirstPetSetupView: View {
         .frame(height: 180)
     }
 
-    private var notesEditor: some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(Color(.systemBackground).opacity(0.9))
-                .shadow(color: Color.black.opacity(0.04), radius: 18, y: 8)
-
-            TextEditor(text: $notes)
-                .scrollContentBackground(.hidden)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 18)
-                .frame(minHeight: 220)
-                .font(.system(size: 18))
-
-            if notes.isEmpty {
-                Text("Notes")
-                    .font(.system(size: 18))
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 28)
-                    .allowsHitTesting(false)
-            }
-        }
-        .frame(height: 220)
-    }
-
     private func refinedTextField(text: Binding<String>, placeholder: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             TextField("", text: text)
@@ -470,7 +447,7 @@ struct FirstPetSetupView: View {
     }
 
     private func updateFocus(for step: Int) {
-        isTextFieldFocused = step == 0 || step == 2 || step == 4 || step == 5
+        isTextFieldFocused = step == 0 || step == 2 || step == 4 || step == 5 || step == 6
     }
 
     private func advance() {
@@ -514,8 +491,8 @@ struct FirstPetSetupView: View {
             sex: sex,
             age: age,
             weight: weight,
-            bio: bio,
-            notes: notes
+            homeCity: homeCity,
+            bio: bio
         ) else {
             if petsService.errorMessage == nil {
                 petsService.errorMessage = "Could not save your pet. Please try again."

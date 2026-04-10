@@ -53,12 +53,12 @@ struct ProfileView: View {
             await petsService.loadPets(for: user.id)
         }
         .sheet(isPresented: $showingAddPet) {
-            ProfilePetEditorSheet(title: "Add Pet", pet: nil, isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, sex, age, weight, bio, notes in
+            ProfilePetEditorSheet(title: "Add Pet", pet: nil, isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, sex, age, weight, homeCity, bio in
                 guard !isSavingPet else { return false }
                 isSavingPet = true
                 defer { isSavingPet = false }
 
-                let savedPet = await petsService.addPet(for: user.id, name: name, species: species, breed: breed, sex: sex, age: age, weight: weight, bio: bio, notes: notes)
+                let savedPet = await petsService.addPet(for: user.id, name: name, species: species, breed: breed, sex: sex, age: age, weight: weight, homeCity: homeCity, bio: bio)
                 guard savedPet != nil else { return false }
 
                 if let selected = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
@@ -72,7 +72,7 @@ struct ProfileView: View {
             }
         }
         .sheet(item: $editingPet) { pet in
-            ProfilePetEditorSheet(title: "Edit Pet", pet: pet, isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, sex, age, weight, bio, notes in
+            ProfilePetEditorSheet(title: "Edit Pet", pet: pet, isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, sex, age, weight, homeCity, bio in
                 guard !isSavingPet else { return false }
                 isSavingPet = true
                 defer { isSavingPet = false }
@@ -84,8 +84,8 @@ struct ProfileView: View {
                 updatedPet.sex = sex
                 updatedPet.age = age
                 updatedPet.weight = weight
+                updatedPet.home_city = homeCity
                 updatedPet.bio = bio
-                updatedPet.notes = notes
                 await petsService.updatePet(updatedPet, for: user.id)
                 if petsService.errorMessage == nil {
                     statusMessage = "Pet updated"
@@ -156,18 +156,11 @@ struct ProfileView: View {
                 Spacer()
             }
 
-            if let activePet {
-                if let bio = trimmed(activePet.bio) {
-                    Text(bio)
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else if let notes = trimmed(activePet.notes) {
-                    Text(notes)
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+            if let activePet, let bio = trimmed(activePet.bio) {
+                Text(bio)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if petsService.isLoading && petsService.pets.isEmpty {
@@ -269,6 +262,8 @@ struct ProfileView: View {
                 detailRow(title: "Age", value: activePet?.age ?? "Not set")
                 Divider().padding(.leading, 16)
                 detailRow(title: "Weight", value: activePet?.weight ?? "Not set")
+                Divider().padding(.leading, 16)
+                detailRow(title: "Home City", value: activePet?.home_city ?? "Not set")
             }
             .background(Color(.systemBackground))
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -539,7 +534,7 @@ struct ProfileView: View {
 
     private var activePetSummary: String {
         guard let activePet else { return "Choose or create a pet" }
-        let details = [activePet.species, activePet.breed, activePet.sex, activePet.age]
+        let details = [activePet.species, activePet.breed, activePet.sex, activePet.age, activePet.home_city]
             .compactMap { trimmed($0) }
         return details.isEmpty ? "Pet profile" : details.joined(separator: " · ")
     }
@@ -557,7 +552,7 @@ struct ProfileView: View {
     }
 
     private func petDetail(for pet: RemotePet) -> String {
-        [pet.species, pet.breed, pet.sex, pet.age]
+        [pet.species, pet.breed, pet.sex, pet.age, pet.home_city]
             .compactMap { trimmed($0) }
             .joined(separator: " · ")
     }
@@ -581,8 +576,8 @@ private struct ProfilePetEditorSheet: View {
     @State private var sex: String
     @State private var age: String
     @State private var weight: String
+    @State private var homeCity: String
     @State private var bio: String
-    @State private var notes: String
 
     let title: String
     let isSaving: Bool
@@ -600,8 +595,8 @@ private struct ProfilePetEditorSheet: View {
         _sex = State(initialValue: pet?.sex ?? "")
         _age = State(initialValue: pet?.age ?? "")
         _weight = State(initialValue: pet?.weight ?? "")
+        _homeCity = State(initialValue: pet?.home_city ?? "")
         _bio = State(initialValue: pet?.bio ?? "")
-        _notes = State(initialValue: pet?.notes ?? "")
     }
 
     var body: some View {
@@ -661,6 +656,11 @@ private struct ProfilePetEditorSheet: View {
                             inputRow(title: "Weight") {
                                 TextField("Optional", text: $weight)
                             }
+                            Divider().padding(.leading, 16)
+                            inputRow(title: "Home City") {
+                                TextField("Optional", text: $homeCity)
+                                    .textInputAutocapitalization(.words)
+                            }
                         }
                         .background(Color(.systemBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -671,20 +671,6 @@ private struct ProfilePetEditorSheet: View {
                                 .foregroundStyle(.secondary)
 
                             TextField("Optional", text: $bio, axis: .vertical)
-                                .lineLimit(3...6)
-                                .font(.system(size: 16))
-                        }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.systemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Notes")
-                                .font(.system(size: 15, weight: .medium))
-                                .foregroundStyle(.secondary)
-
-                            TextField("Optional", text: $notes, axis: .vertical)
                                 .lineLimit(3...6)
                                 .font(.system(size: 16))
                         }
@@ -710,7 +696,7 @@ private struct ProfilePetEditorSheet: View {
 
                         Button {
                             Task {
-                                let didSave = await onSave(name, species, breed, sex, age, weight, bio, notes)
+                                let didSave = await onSave(name, species, breed, sex, age, weight, homeCity, bio)
                                 if didSave {
                                     dismiss()
                                 }
