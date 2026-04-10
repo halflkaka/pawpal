@@ -4,6 +4,7 @@ struct RemotePetsView: View {
     let user: AppUser
     @StateObject private var petsService = PetsService()
     @State private var showingAddPet = false
+    @State private var isSavingPet = false
 
     var body: some View {
         ScrollView {
@@ -56,10 +57,13 @@ struct RemotePetsView: View {
             await petsService.loadPets(for: user.id)
         }
         .sheet(isPresented: $showingAddPet) {
-            RemoteAddPetSheet { name, species, breed, sex, age, weight, homeCity, bio in
-                Task {
-                    await petsService.addPet(for: user.id, name: name, species: species, breed: breed, sex: sex, age: age, weight: weight, homeCity: homeCity, bio: bio)
-                }
+            RemoteAddPetSheet(isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, sex, age, weight, homeCity, bio in
+                guard !isSavingPet else { return false }
+                isSavingPet = true
+                defer { isSavingPet = false }
+
+                let savedPet = await petsService.addPet(for: user.id, name: name, species: species, breed: breed, sex: sex, age: age, weight: weight, homeCity: homeCity, bio: bio)
+                return savedPet != nil
             }
         }
     }
@@ -134,7 +138,9 @@ private struct RemoteAddPetSheet: View {
     @State private var homeCity = ""
     @State private var bio = ""
 
-    let onSave: (String, String, String, String, String, String, String, String) -> Void
+    let isSaving: Bool
+    let errorMessage: String?
+    let onSave: (String, String, String, String, String, String, String, String) async -> Bool
 
     var body: some View {
         NavigationStack {
@@ -162,13 +168,30 @@ private struct RemoteAddPetSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        onSave(name, species, breed, sex, age, weight, homeCity, bio)
-                        dismiss()
+                    Button(isSaving ? "Saving..." : "Save") {
+                        Task {
+                            let didSave = await onSave(name, species, breed, sex, age, weight, homeCity, bio)
+                            if didSave {
+                                dismiss()
+                            }
+                        }
                     }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Color(.systemBackground))
                 }
             }
         }
