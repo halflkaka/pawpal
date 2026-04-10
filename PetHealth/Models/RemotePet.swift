@@ -7,9 +7,15 @@ struct RemotePet: Identifiable, Codable, Equatable {
     var species: String?
     var breed: String?
     var sex: String?
-    var age: String?
+    var age_text: String?
     var weight: String?
+    var home_city: String?
     var bio: String?
     var notes: String?
     let created_at: Date
+
+    var age: String? {
+        get { age_text }
+        set { age_text = newValue }
+    }
 }
