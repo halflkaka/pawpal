@@ -2,50 +2,53 @@ import SwiftUI
 
 struct MainTabView: View {
     enum AppTab: Hashable {
+        case home
+        case explore
+        case create
         case chat
-        case contacts
-        case moments
         case profile
     }
 
-    @State private var selectedTab: AppTab = .moments
+    @State private var selectedTab: AppTab = .home
     @Bindable var authManager: AuthManager
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            NavigationStack {
-                ChatListView()
-            }
-            .tabItem {
-                Label("Chat", systemImage: "message.fill")
-            }
-            .tag(AppTab.chat)
-
-            NavigationStack {
-                ContactsView()
-            }
-            .tabItem {
-                Label("Contacts", systemImage: "person.2.fill")
-            }
-            .tag(AppTab.contacts)
-
-            NavigationStack {
-                FeedView()
-            }
-            .tabItem {
-                Label("Moments", systemImage: "camera.on.rectangle")
-            }
-            .tag(AppTab.moments)
-
-            NavigationStack {
-                if let user = authManager.currentUser {
-                    ProfileView(user: user, authManager: authManager)
+            Tab("Home", systemImage: "house.fill", value: .home) {
+                NavigationStack {
+                    FeedView()
                 }
             }
-            .tabItem {
-                Label("Profile", systemImage: "person.crop.circle")
+
+            Tab("Explore", systemImage: "safari.fill", value: .explore) {
+                NavigationStack {
+                    ContactsView()
+                }
             }
-            .tag(AppTab.profile)
+
+            Tab("Share", systemImage: "plus.app.fill", value: .create) {
+                NavigationStack {
+                    CreatePostView()
+                }
+            }
+
+            Tab("Chats", systemImage: "message.fill", value: .chat) {
+                NavigationStack {
+                    ChatListView()
+                }
+            }
+            .badge(2)
+
+            Tab("Me", systemImage: "pawprint.fill", value: .profile) {
+                NavigationStack {
+                    if let user = authManager.currentUser {
+                        ProfileView(user: user, authManager: authManager)
+                    }
+                }
+            }
         }
+        .tint(PawPalTheme.orange)
+        .toolbarBackground(PawPalTheme.surface, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
     }
 }
