@@ -11,6 +11,11 @@ struct RemotePet: Identifiable, Codable, Equatable {
     var weight: String?
     var home_city: String?
     var bio: String?
+
+    var hometown: String? {
+        get { home_city }
+        set { home_city = newValue }
+    }
     let created_at: Date
 
     var age: String? {
