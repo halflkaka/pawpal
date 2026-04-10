@@ -158,8 +158,9 @@ struct ProfileView: View {
 
             if let activePet, let bio = trimmed(activePet.bio) {
                 Text(bio)
-                    .font(.system(size: 15))
+                    .font(.system(size: 14))
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -464,19 +465,20 @@ struct ProfileView: View {
     }
 
     private func detailRow(title: String, value: String) -> some View {
-        HStack(alignment: .center, spacing: 16) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .foregroundStyle(.primary)
-            Spacer(minLength: 16)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .textCase(.uppercase)
+
             Text(value)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .multilineTextAlignment(.trailing)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 16))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .font(.system(size: 16))
         .padding(.horizontal, 16)
-        .padding(.vertical, 16)
+        .padding(.vertical, 14)
     }
 
     private func actionPill(title: String, systemImage: String) -> some View {
@@ -571,6 +573,7 @@ struct ProfileView: View {
         [
             ("Breed", trimmed(pet.breed) ?? "Not set"),
             ("Age", trimmed(pet.age) ?? "Not set"),
+            ("Weight", trimmed(pet.weight) ?? "Not set"),
             ("Hometown", trimmed(pet.home_city) ?? "Not set")
         ]
     }
