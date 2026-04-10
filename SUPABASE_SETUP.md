@@ -1,8 +1,8 @@
-# Supabase Setup for PetHealth
+# Supabase Setup for PawPal
 
 ## Goal
 
-Turn PetHealth from a local-first prototype into a real social app with:
+Turn PawPal from a local-first prototype into a real social app with:
 - user accounts
 - pets owned by users
 - posts
@@ -81,7 +81,7 @@ This is simpler and more scalable than pet-follows-pet for a real social platfor
 
 ## Product note
 
-PetHealth should now be treated as:
+PawPal should now be treated as:
 - a pet social / pet life app first
 - care tools second
 

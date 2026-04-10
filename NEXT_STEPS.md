@@ -22,7 +22,7 @@
 
 ## Current Product Rule
 
-PetHealth is now a **pet social / pet life app** first.
+PawPal is now a **pet social / pet life app** first.
 Care tools are important, but secondary to the app identity.
 
 Design reference:

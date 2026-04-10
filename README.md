@@ -4,9 +4,9 @@ A small personal-use pet health app project.
 
 ## Structure
 
-- `PetHealth/` — iOS SwiftUI app
+- `PawPal/` — iOS SwiftUI app
 - `pet-health-backend/` — FastAPI backend
-- `PetHealth.xcodeproj/` — Xcode project
+- `PawPal.xcodeproj/` — Xcode project
 
 ## Current goal
 

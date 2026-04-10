@@ -26,7 +26,7 @@ struct AuthView: View {
                                     .foregroundStyle(.gray)
                             }
 
-                        Text("PetHealth")
+                        Text("PawPal")
                             .font(.system(size: 30, weight: .semibold))
                             .tracking(-0.5)
 

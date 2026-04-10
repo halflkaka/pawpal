@@ -1,4 +1,4 @@
-# PetHealth Database Schema (Proposed)
+# PawPal Database Schema (Proposed)
 
 ## Design Rule
 

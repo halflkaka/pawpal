@@ -1,8 +1,8 @@
-# PetHealth Social Architecture
+# PawPal Social Architecture
 
 ## Product Direction
 
-PetHealth is evolving from a local-first pet health prototype into a **pet social / pet life app** with WeChat Moments as the primary design reference.
+PawPal is evolving from a local-first pet health prototype into a **pet social / pet life app** with WeChat Moments as the primary design reference.
 
 The long-term shape is:
 - user accounts
