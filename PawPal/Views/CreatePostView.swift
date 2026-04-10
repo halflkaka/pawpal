@@ -4,9 +4,10 @@ import SwiftData
 
 struct CreatePostView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \StoredPetProfile.createdAt, order: .reverse) private var pets: [StoredPetProfile]
+    @Bindable var authManager: AuthManager
     @AppStorage("activePetID") private var activePetID = ""
 
+    @StateObject private var petsService = PetsService()
     @State private var selectedPetID: UUID?
     @State private var caption = ""
     @State private var mood = ""
@@ -14,8 +15,8 @@ struct CreatePostView: View {
     @State private var selectedImageData: [Data] = []
     @State private var didPost = false
 
-    private var selectedPet: StoredPetProfile? {
-        pets.first(where: { $0.id == selectedPetID })
+    private var selectedPet: RemotePet? {
+        petsService.pets.first(where: { $0.id == selectedPetID })
     }
 
     private var canPost: Bool {
@@ -33,7 +34,10 @@ struct CreatePostView: View {
                         .padding(.top, 16)
                         .padding(.bottom, 20)
 
-                    if pets.isEmpty {
+                    if petsService.isLoading {
+                        ProgressView()
+                            .padding(.top, 80)
+                    } else if petsService.pets.isEmpty {
                         noPetsPrompt
                     } else {
                         VStack(spacing: 16) {
@@ -51,7 +55,7 @@ struct CreatePostView: View {
             }
             .scrollIndicators(.hidden)
 
-            if !pets.isEmpty {
+            if !petsService.pets.isEmpty {
                 postButtonBar
             }
         }
@@ -59,11 +63,14 @@ struct CreatePostView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .task {
+            if let user = authManager.currentUser {
+                await petsService.loadPets(for: user.id)
+            }
             if let activeID = UUID(uuidString: activePetID),
-               pets.contains(where: { $0.id == activeID }) {
+               petsService.pets.contains(where: { $0.id == activeID }) {
                 selectedPetID = activeID
             } else {
-                selectedPetID = pets.first?.id
+                selectedPetID = petsService.pets.first?.id
             }
         }
         .onChange(of: selectedItems) { _, newItems in
@@ -108,7 +115,7 @@ struct CreatePostView: View {
         .padding(.top, 80)
     }
 
-    // MARK: - Pet selector (required, prominent)
+    // MARK: - Pet selector
 
     private var petSelectorSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -116,7 +123,6 @@ struct CreatePostView: View {
                 Text("Posting as")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.secondaryText)
-                // Required badge
                 Text("required")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.orange)
@@ -127,7 +133,7 @@ struct CreatePostView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(pets) { pet in
+                    ForEach(petsService.pets) { pet in
                         petChip(pet)
                     }
                 }
@@ -139,7 +145,7 @@ struct CreatePostView: View {
         .shadow(color: PawPalTheme.softShadow, radius: 12, y: 4)
     }
 
-    private func petChip(_ pet: StoredPetProfile) -> some View {
+    private func petChip(_ pet: RemotePet) -> some View {
         let isSelected = selectedPetID == pet.id
         return Button {
             selectedPetID = pet.id
@@ -149,16 +155,16 @@ struct CreatePostView: View {
                     Circle()
                         .fill(isSelected ? PawPalTheme.orange : PawPalTheme.cardSoft)
                         .frame(width: 38, height: 38)
-                    Text(speciesEmoji(for: pet.species))
+                    Text(speciesEmoji(for: pet.species ?? ""))
                         .font(.system(size: 18))
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(pet.name.isEmpty ? "Unnamed" : pet.name)
+                    Text(pet.name)
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(isSelected ? .white : PawPalTheme.primaryText)
-                    if !pet.species.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(pet.species)
+                    if let species = pet.species, !species.isEmpty {
+                        Text(species)
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(isSelected ? .white.opacity(0.8) : PawPalTheme.tertiaryText)
                     }
@@ -167,17 +173,12 @@ struct CreatePostView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
-                isSelected
-                    ? PawPalTheme.orange
-                    : PawPalTheme.background,
+                isSelected ? PawPalTheme.orange : PawPalTheme.background,
                 in: RoundedRectangle(cornerRadius: 14, style: .continuous)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(
-                        isSelected ? Color.clear : PawPalTheme.orangeGlow,
-                        lineWidth: 1.5
-                    )
+                    .stroke(isSelected ? Color.clear : PawPalTheme.orangeGlow, lineWidth: 1.5)
             )
             .shadow(color: isSelected ? PawPalTheme.orange.opacity(0.3) : .clear, radius: 8, y: 4)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
@@ -189,8 +190,7 @@ struct CreatePostView: View {
 
     private var composerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Dynamic prompt based on selected pet
-            let petName = selectedPet.map { $0.name.isEmpty ? "your pet" : $0.name } ?? "your pet"
+            let petName = selectedPet.map { $0.name } ?? "your pet"
 
             TextField("What's \(petName) up to today?", text: $caption, axis: .vertical)
                 .lineLimit(6...14)
@@ -265,7 +265,6 @@ struct CreatePostView: View {
                 .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .shadow(color: PawPalTheme.softShadow, radius: 8, y: 3)
             }
-
             Spacer()
         }
     }
@@ -276,7 +275,6 @@ struct CreatePostView: View {
         VStack(spacing: 0) {
             Divider().opacity(0.1)
             HStack(spacing: 16) {
-                // Caption requirement hint
                 if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text("Add a caption to post")
                         .font(.system(size: 12, weight: .semibold))
@@ -347,13 +345,11 @@ struct CreatePostView: View {
     }
 
     private func savePost() {
-        guard canPost,
-              let pet = pets.first(where: { $0.id == selectedPetID }) ?? pets.first
-        else { return }
+        guard canPost, let pet = selectedPet else { return }
 
         let post = StoredPost(
             petID: pet.id,
-            petName: pet.name.isEmpty ? "Unnamed Pet" : pet.name,
+            petName: pet.name,
             caption: caption,
             mood: mood,
             imageDataListJSON: StoredPost.encodeImageDataList(selectedImageData)
@@ -364,7 +360,6 @@ struct CreatePostView: View {
 
         activePetID = pet.id.uuidString
 
-        // Reset form
         caption = ""
         mood = ""
         selectedItems = []

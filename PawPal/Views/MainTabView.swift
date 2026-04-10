@@ -28,7 +28,7 @@ struct MainTabView: View {
 
             Tab("Post", systemImage: "plus.app.fill", value: .create) {
                 NavigationStack {
-                    CreatePostView()
+                    CreatePostView(authManager: authManager)
                 }
             }
 

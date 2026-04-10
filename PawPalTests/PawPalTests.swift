@@ -3,65 +3,39 @@ import SwiftData
 import Testing
 @testable import PetHealth
 
-struct PetHealthTests {
-    @Test func storedPetProfilesCanBeFetchedNewestFirst() throws {
+struct PawPalTests {
+    @Test func storedPostCanBeSavedAndFetched() throws {
         let container = try ModelContainer(
-            for: StoredPetProfile.self,
+            for: StoredPost.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
         let context = ModelContext(container)
 
-        let olderPet = StoredPetProfile(
-            createdAt: Date(timeIntervalSince1970: 10),
-            name: "Older",
-            species: "Dog",
-            breed: "Corgi",
-            age: "4",
-            weight: "20 lb",
-            notes: ""
+        let post = StoredPost(
+            petID: UUID(),
+            petName: "Mochi",
+            caption: "Napping in the sun ☀️",
+            mood: "Cozy"
         )
-        let newerPet = StoredPetProfile(
-            createdAt: Date(timeIntervalSince1970: 20),
-            name: "Newer",
-            species: "Cat",
-            breed: "Tabby",
-            age: "2",
-            weight: "9 lb",
-            notes: ""
-        )
-
-        context.insert(olderPet)
-        context.insert(newerPet)
+        context.insert(post)
         try context.save()
 
-        let descriptor = FetchDescriptor<StoredPetProfile>(
+        let descriptor = FetchDescriptor<StoredPost>(
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
-        let pets = try context.fetch(descriptor)
+        let posts = try context.fetch(descriptor)
 
-        #expect(pets.map(\.name) == ["Newer", "Older"])
+        #expect(posts.count == 1)
+        #expect(posts.first?.petName == "Mochi")
+        #expect(posts.first?.caption == "Napping in the sun ☀️")
     }
 
-    @Test func storedPetProfileConvertsToPetProfile() {
-        let createdAt = Date(timeIntervalSince1970: 123)
-        let storedPet = StoredPetProfile(
-            id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
-            createdAt: createdAt,
-            name: "Mochi",
-            species: "Dog",
-            breed: "Shiba",
-            age: "3",
-            weight: "22 lb",
-            notes: "Loves carrots"
-        )
+    @Test func storedPostImageEncodingRoundTrips() {
+        let imageData = Data([0xFF, 0xD8, 0xFF]) // fake JPEG header
+        let encoded = StoredPost.encodeImageDataList([imageData])
+        let decoded = StoredPost.decodeImageDataList(encoded)
 
-        let pet = storedPet.toPetProfile()
-
-        #expect(pet.name == "Mochi")
-        #expect(pet.species == "Dog")
-        #expect(pet.breed == "Shiba")
-        #expect(pet.age == "3")
-        #expect(pet.weight == "22 lb")
-        #expect(pet.notes == "Loves carrots")
+        #expect(decoded.count == 1)
+        #expect(decoded.first == imageData)
     }
 }
