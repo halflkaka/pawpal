@@ -28,7 +28,7 @@ struct ProfileView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                profileTitleBar
+                socialHeader
                 activePetSection
                 petsSection
                 accountSection
@@ -128,29 +128,91 @@ struct ProfileView: View {
         }
     }
 
-    private var profileTitleBar: some View {
-        HStack(alignment: .center) {
-            HStack(spacing: 10) {
-                Text("🐶")
-                    .font(.system(size: 28))
-                Text("My Pets")
-                    .font(.system(size: 30, weight: .bold))
-                    .foregroundStyle(titleColor)
+    // MARK: - Social header (replaces old title bar)
+
+    private var socialHeader: some View {
+        VStack(spacing: 16) {
+            // Avatar row
+            HStack(alignment: .center, spacing: 16) {
+                // User avatar
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [accentOrange, Color(red: 0.98, green: 0.70, blue: 0.40)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 72, height: 72)
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 30, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                .shadow(color: accentOrange.opacity(0.3), radius: 12, y: 6)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(accountDisplayName)
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(titleColor)
+                        .lineLimit(1)
+
+                    Text(profileHandle.isEmpty ? user.email ?? "" : profileHandle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    if let bio = trimmed(profile?.bio) {
+                        Text(bio)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+
+                Spacer()
+
+                Button {
+                    showingEditAccount = true
+                } label: {
+                    Text("Edit")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(accentOrange)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(accentOrange.opacity(0.1), in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
 
-            Spacer()
-
-            Button {
-                showingAddPet = true
-            } label: {
-                Label("Add", systemImage: "plus")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(accentGreen)
+            // Social stats row
+            HStack(spacing: 0) {
+                socialStat(value: "24", label: "Posts")
+                Divider().frame(height: 28)
+                socialStat(value: "312", label: "Followers")
+                Divider().frame(height: 28)
+                socialStat(value: "189", label: "Following")
             }
-            .buttonStyle(.plain)
+            .padding(.vertical, 10)
+            .background(
+                Color.white.opacity(0.7),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
         }
         .padding(.top, 6)
     }
+
+    private func socialStat(value: String, label: String) -> some View {
+        VStack(spacing: 4) {
+            Text(value)
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(titleColor)
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
 
     @ViewBuilder
     private var activePetSection: some View {
@@ -173,11 +235,20 @@ struct ProfileView: View {
                     loadingBanner("Loading pets")
                 }
             }
-            .profileCardStyle()
+            .padding(20)
+            .background(
+                LinearGradient(
+                    colors: [accentOrange, Color(red: 0.98, green: 0.55, blue: 0.33)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: 30, style: .continuous)
+            )
+            .shadow(color: Color.black.opacity(0.08), radius: 20, y: 10)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 Text("No Active Pet")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundStyle(titleColor)
                 Text("Choose or add a pet to see profile details.")
                     .foregroundStyle(.secondary)
@@ -254,27 +325,31 @@ struct ProfileView: View {
     private func petSummaryHeader(_ pet: RemotePet) -> some View {
         HStack(alignment: .center, spacing: 16) {
             Circle()
-                .fill(Color.white)
-                .frame(width: 78, height: 78)
+                .fill(Color.white.opacity(0.95))
+                .frame(width: 82, height: 82)
                 .overlay(
                     Image(systemName: iconName(for: pet.species ?? ""))
-                        .font(.system(size: 30, weight: .medium))
+                        .font(.system(size: 32, weight: .medium))
                         .foregroundStyle(accentOrange)
                 )
-                .shadow(color: Color.black.opacity(0.05), radius: 10, y: 4)
+                .shadow(color: Color.black.opacity(0.08), radius: 12, y: 4)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Text(pet.name)
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundStyle(titleColor)
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
 
                     Circle()
-                        .fill(statusColor(for: pet))
+                        .fill(Color.white.opacity(0.85))
                         .frame(width: 10, height: 10)
                 }
+
+                Text(petDetail(for: pet).isEmpty ? "Pet profile" : petDetail(for: pet))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.82))
 
                 statsPillRow(for: pet)
             }
@@ -301,14 +376,14 @@ struct ProfileView: View {
             Button {
                 editingPet = pet
             } label: {
-                Text("Edit")
-                    .font(.system(size: 16, weight: .semibold))
+                Text("Edit Profile")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Color(red: 0.95, green: 0.94, blue: 0.86), in: Capsule())
+                    .padding(.vertical, 15)
+                    .background(Color.white, in: Capsule())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(accentGreen)
+            .foregroundStyle(accentOrange)
 
             Menu {
                 ForEach(petsService.pets) { pet in
@@ -318,13 +393,13 @@ struct ProfileView: View {
                     }
                 }
             } label: {
-                Text("Switch")
-                    .font(.system(size: 16, weight: .semibold))
+                Text("Switch Pet")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Color.white.opacity(0.75), in: Capsule())
+                    .padding(.vertical, 15)
+                    .background(Color.white.opacity(0.24), in: Capsule())
             }
-            .foregroundStyle(titleColor)
+            .foregroundStyle(.white)
         }
     }
 
@@ -374,19 +449,18 @@ struct ProfileView: View {
         } label: {
             HStack(spacing: 14) {
                 Circle()
-                    .fill(Color.white)
+                    .fill(Color(red: 1.00, green: 0.94, blue: 0.88))
                     .frame(width: 64, height: 64)
                     .overlay(
                         Image(systemName: iconName(for: pet.species ?? ""))
                             .font(.system(size: 24, weight: .medium))
                             .foregroundStyle(accentOrange)
                     )
-                    .shadow(color: Color.black.opacity(0.05), radius: 8, y: 4)
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
                         Text(pet.name)
-                            .font(.system(size: 22, weight: .bold))
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
                             .foregroundStyle(titleColor)
                             .lineLimit(1)
                         Circle()
@@ -402,13 +476,9 @@ struct ProfileView: View {
 
                 Spacer()
 
-                VStack(alignment: .trailing, spacing: 10) {
-                    Text("Edit")
-                        .font(.system(size: 15, weight: .medium))
-                    Text("Delete")
-                        .font(.system(size: 15, weight: .medium))
-                }
-                .foregroundStyle(.secondary)
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.secondary)
             }
             .padding(18)
             .contentShape(Rectangle())
@@ -538,16 +608,16 @@ struct ProfileView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.white.opacity(0.78))
             Text(value)
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(titleColor)
+                .foregroundStyle(.white)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 15)
-        .background(Color(red: 0.98, green: 0.97, blue: 0.94), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func detailLine(title: String, value: String, multiline: Bool = false) -> some View {
@@ -570,15 +640,15 @@ struct ProfileView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.white.opacity(0.78))
             Text(value)
-                .font(.system(size: 16))
-                .foregroundStyle(titleColor)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(.white)
                 .fixedSize(horizontal: false, vertical: true)
                 .lineSpacing(3)
         }
         .padding(16)
-        .background(Color(red: 0.98, green: 0.97, blue: 0.94), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func loadingRow(_ text: String) -> some View {

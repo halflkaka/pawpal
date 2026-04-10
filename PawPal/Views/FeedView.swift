@@ -12,7 +12,6 @@ struct FeedView: View {
             LazyVStack(alignment: .leading, spacing: 18) {
                 header
                 storiesRow
-                composerCard
 
                 if posts.isEmpty {
                     ForEach(PawPalFeedPost.sample) { post in
@@ -85,35 +84,6 @@ struct FeedView: View {
             .padding(.vertical, 2)
         }
         .scrollIndicators(.hidden)
-    }
-
-    private var composerCard: some View {
-        HStack(spacing: 12) {
-            PawPalAvatar(emoji: "🐶", ringColor: PawPalTheme.orangeSoft)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Share a moment")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(PawPalTheme.primaryText)
-                Text("Photo, story, or tiny chaos update 🐾")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            NavigationLink {
-                CreatePostView()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(PawPalTheme.orange, in: Circle())
-            }
-            .buttonStyle(.plain)
-        }
-        .pawPalCard()
     }
 
     private func samplePostCard(_ post: PawPalFeedPost) -> some View {
