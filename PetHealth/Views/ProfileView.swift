@@ -81,6 +81,7 @@ struct ProfileView: View {
                 updatedPet.name = name
                 updatedPet.species = species
                 updatedPet.breed = breed
+                updatedPet.sex = sex
                 updatedPet.age = age
                 updatedPet.weight = weight
                 updatedPet.home_city = homeCity
@@ -255,6 +256,8 @@ struct ProfileView: View {
                 detailRow(title: "Species", value: activePet?.species ?? "Not set")
                 Divider().padding(.leading, 16)
                 detailRow(title: "Breed", value: activePet?.breed ?? "Not set")
+                Divider().padding(.leading, 16)
+                detailRow(title: "Sex", value: activePet?.sex ?? "Not set")
                 Divider().padding(.leading, 16)
                 detailRow(title: "Age", value: activePet?.age ?? "Not set")
                 Divider().padding(.leading, 16)
@@ -531,7 +534,7 @@ struct ProfileView: View {
 
     private var activePetSummary: String {
         guard let activePet else { return "Choose or create a pet" }
-        let details = [activePet.species, activePet.breed, activePet.age, activePet.home_city]
+        let details = [activePet.species, activePet.breed, activePet.sex, activePet.age, activePet.home_city]
             .compactMap { trimmed($0) }
         return details.isEmpty ? "Pet profile" : details.joined(separator: " · ")
     }
@@ -549,7 +552,7 @@ struct ProfileView: View {
     }
 
     private func petDetail(for pet: RemotePet) -> String {
-        [pet.species, pet.breed, pet.age, pet.home_city]
+        [pet.species, pet.breed, pet.sex, pet.age, pet.home_city]
             .compactMap { trimmed($0) }
             .joined(separator: " · ")
     }
@@ -589,7 +592,7 @@ private struct ProfilePetEditorSheet: View {
         _name = State(initialValue: pet?.name ?? "")
         _species = State(initialValue: pet?.species?.isEmpty == false ? pet?.species ?? "Dog" : "Dog")
         _breed = State(initialValue: pet?.breed ?? "")
-        _sex = State(initialValue: "")
+        _sex = State(initialValue: pet?.sex ?? "")
         _age = State(initialValue: pet?.age ?? "")
         _weight = State(initialValue: pet?.weight ?? "")
         _homeCity = State(initialValue: pet?.home_city ?? "")
