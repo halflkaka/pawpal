@@ -9,7 +9,8 @@ struct RemoteProfile: Codable, Equatable {
     var avatar_url: String?
 }
 
-struct ProfileUpdatePayload: Encodable {
+struct ProfileUpsertPayload: Encodable {
+    let id: UUID
     let username: String?
     let display_name: String?
     let bio: String?
@@ -52,7 +53,8 @@ struct ProfileService {
             throw ProfileError(message: "Username is required.")
         }
 
-        let payload = ProfileUpdatePayload(
+        let payload = ProfileUpsertPayload(
+            id: userID,
             username: normalizedUsername.lowercased(),
             display_name: normalizedDisplayName,
             bio: normalizedBio
@@ -61,8 +63,7 @@ struct ProfileService {
         do {
             return try await client
                 .from("profiles")
-                .update(payload)
-                .eq("id", value: userID.uuidString)
+                .upsert(payload)
                 .select()
                 .single()
                 .execute()
