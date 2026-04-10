@@ -29,29 +29,21 @@ struct ProfileView: View {
         List {
             if let activePet {
                 Section {
-                    petHeader(activePet)
-                        .listRowInsets(EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
-
-                    petQuickFacts(activePet)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                    petOverview(activePet)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
 
                     if let bio = trimmed(activePet.bio) {
                         simpleMultilineRow(title: "Bio", value: bio)
-                            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
                     }
 
                     petActionBar(activePet)
-                        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
 
                     if let statusMessage {
                         statusBanner(text: statusMessage, tint: .green, icon: "checkmark.circle")
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else if let errorMessage = petsService.errorMessage {
                         statusBanner(text: errorMessage, tint: .red, icon: "exclamationmark.circle")
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else if petsService.isLoading && petsService.pets.isEmpty {
                         loadingBanner("Loading pets")
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     }
                 }
             } else {
@@ -224,29 +216,42 @@ struct ProfileView: View {
         }
     }
 
-    private func petHeader(_ pet: RemotePet) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: iconName(for: pet.species ?? ""))
-                .font(.system(size: 26))
-                .foregroundStyle(.secondary)
-                .frame(width: 44, height: 44)
-                .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    private func petOverview(_ pet: RemotePet) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: iconName(for: pet.species ?? ""))
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 42, height: 42)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(pet.name)
-                    .font(.system(size: 24, weight: .semibold))
-                Text(activePetSummary)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                if let ownerLine {
-                    Text(ownerLine)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(pet.name)
+                        .font(.title3.weight(.semibold))
+                    Text(activePetSummary)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    if let ownerLine {
+                        Text(ownerLine)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
+
+                Spacer()
             }
 
-            Spacer()
+            VStack(spacing: 0) {
+                ForEach(Array(petDetailRows(for: pet).enumerated()), id: \.offset) { index, row in
+                    if index > 0 {
+                        Divider()
+                    }
+                    detailLine(title: row.title, value: row.value)
+                }
+            }
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 
@@ -257,8 +262,6 @@ struct ProfileView: View {
             } label: {
                 Label("Edit Pet", systemImage: "square.and.pencil")
             }
-
-            Spacer()
 
             Menu {
                 ForEach(petsService.pets) { pet in
@@ -271,19 +274,9 @@ struct ProfileView: View {
                 Label("Switch Pet", systemImage: "arrow.left.arrow.right")
             }
         }
+        .buttonStyle(.bordered)
         .labelStyle(.titleAndIcon)
         .font(.subheadline)
-    }
-
-    private func petQuickFacts(_ pet: RemotePet) -> some View {
-        VStack(spacing: 0) {
-            ForEach(Array(petDetailRows(for: pet).enumerated()), id: \.offset) { index, row in
-                if index > 0 {
-                    Divider()
-                }
-                detailLine(title: row.title, value: row.value)
-            }
-        }
     }
 
     private func petListRow(_ pet: RemotePet) -> some View {
@@ -303,38 +296,38 @@ struct ProfileView: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: iconName(for: pet.species ?? ""))
-                    .font(.system(size: 18))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 36, height: 36)
-                    .background(Color.accentColor.opacity(0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, height: 34)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(pet.name)
-                            .font(.system(size: 16, weight: .medium))
+                            .font(.body.weight(.medium))
                             .foregroundStyle(.primary)
                         if pet.id.uuidString == activePetID {
-                            Text("Active")
-                                .font(.system(size: 11, weight: .medium))
+                            Text("Current")
+                                .font(.caption.weight(.medium))
                                 .foregroundStyle(Color.accentColor)
                         }
                     }
 
                     if !petDetail(for: pet).isEmpty {
                         Text(petDetail(for: pet))
-                            .font(.system(size: 13))
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 Spacer()
 
-                Image(systemName: "ellipsis.circle")
+                Image(systemName: "ellipsis")
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -378,25 +371,30 @@ struct ProfileView: View {
     private func detailLine(title: String, value: String, multiline: Bool = false) -> some View {
         HStack(alignment: multiline ? .top : .firstTextBaseline, spacing: 16) {
             Text(title)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 16)
             Text(value)
+                .font(.subheadline)
                 .multilineTextAlignment(.trailing)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: multiline)
         }
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
     }
 
     private func simpleMultilineRow(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 13, weight: .medium))
+                .font(.footnote.weight(.medium))
                 .foregroundStyle(.secondary)
             Text(value)
+                .font(.body)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.vertical, 4)
     }
 
     private func loadingRow(_ text: String) -> some View {
