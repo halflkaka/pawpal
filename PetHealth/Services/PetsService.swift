@@ -39,25 +39,25 @@ final class PetsService: ObservableObject {
         struct NewPet: Encodable {
             let owner_user_id: UUID
             let name: String
-            let species: String
-            let breed: String
-            let sex: String
-            let age_text: String
-            let weight: String
-            let home_city: String
-            let bio: String
+            let species: String?
+            let breed: String?
+            let sex: String?
+            let age_text: String?
+            let weight: String?
+            let home_city: String?
+            let bio: String?
         }
 
         let payload = NewPet(
             owner_user_id: userID,
-            name: name,
-            species: species,
-            breed: breed,
-            sex: sex,
-            age_text: age,
-            weight: weight,
-            home_city: homeCity,
-            bio: bio
+            name: normalizeRequired(name),
+            species: normalizeOptional(species),
+            breed: normalizeOptional(breed),
+            sex: normalizeOptional(sex),
+            age_text: normalizeOptional(age),
+            weight: normalizeOptional(weight),
+            home_city: normalizeOptional(homeCity),
+            bio: normalizeOptional(bio)
         )
 
         errorMessage = nil
@@ -82,26 +82,26 @@ final class PetsService: ObservableObject {
     func updatePet(_ pet: RemotePet, for userID: UUID) async {
         struct PetUpdate: Encodable {
             let name: String
-            let species: String
-            let breed: String
-            let sex: String
-            let age_text: String
-            let weight: String
-            let home_city: String
-            let bio: String
+            let species: String?
+            let breed: String?
+            let sex: String?
+            let age_text: String?
+            let weight: String?
+            let home_city: String?
+            let bio: String?
         }
 
         errorMessage = nil
 
         let payload = PetUpdate(
-            name: pet.name,
-            species: pet.species ?? "",
-            breed: pet.breed ?? "",
-            sex: pet.sex ?? "",
-            age_text: pet.age ?? "",
-            weight: pet.weight ?? "",
-            home_city: pet.home_city ?? "",
-            bio: pet.bio ?? ""
+            name: normalizeRequired(pet.name),
+            species: normalizeOptional(pet.species),
+            breed: normalizeOptional(pet.breed),
+            sex: normalizeOptional(pet.sex),
+            age_text: normalizeOptional(pet.age),
+            weight: normalizeOptional(pet.weight),
+            home_city: normalizeOptional(pet.home_city),
+            bio: normalizeOptional(pet.bio)
         )
 
         do {
@@ -129,5 +129,15 @@ final class PetsService: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func normalizeOptional(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func normalizeRequired(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
