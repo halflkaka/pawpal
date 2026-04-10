@@ -53,12 +53,12 @@ struct ProfileView: View {
             await petsService.loadPets(for: user.id)
         }
         .sheet(isPresented: $showingAddPet) {
-            ProfilePetEditorSheet(title: "Add Pet", pet: nil, isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, age, weight, bio, notes in
+            ProfilePetEditorSheet(title: "Add Pet", pet: nil, isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, sex, age, weight, bio, notes in
                 guard !isSavingPet else { return false }
                 isSavingPet = true
                 defer { isSavingPet = false }
 
-                let savedPet = await petsService.addPet(for: user.id, name: name, species: species, breed: breed, age: age, weight: weight, bio: bio, notes: notes)
+                let savedPet = await petsService.addPet(for: user.id, name: name, species: species, breed: breed, sex: sex, age: age, weight: weight, bio: bio, notes: notes)
                 guard savedPet != nil else { return false }
 
                 if let selected = petsService.pets.first(where: { $0.id.uuidString == activePetID }) {
@@ -72,7 +72,7 @@ struct ProfileView: View {
             }
         }
         .sheet(item: $editingPet) { pet in
-            ProfilePetEditorSheet(title: "Edit Pet", pet: pet, isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, age, weight, bio, notes in
+            ProfilePetEditorSheet(title: "Edit Pet", pet: pet, isSaving: isSavingPet, errorMessage: petsService.errorMessage) { name, species, breed, sex, age, weight, bio, notes in
                 guard !isSavingPet else { return false }
                 isSavingPet = true
                 defer { isSavingPet = false }
@@ -81,6 +81,7 @@ struct ProfileView: View {
                 updatedPet.name = name
                 updatedPet.species = species
                 updatedPet.breed = breed
+                updatedPet.sex = sex
                 updatedPet.age = age
                 updatedPet.weight = weight
                 updatedPet.bio = bio
@@ -262,6 +263,8 @@ struct ProfileView: View {
                 detailRow(title: "Species", value: activePet?.species ?? "Not set")
                 Divider().padding(.leading, 16)
                 detailRow(title: "Breed", value: activePet?.breed ?? "Not set")
+                Divider().padding(.leading, 16)
+                detailRow(title: "Sex", value: activePet?.sex ?? "Not set")
                 Divider().padding(.leading, 16)
                 detailRow(title: "Age", value: activePet?.age ?? "Not set")
                 Divider().padding(.leading, 16)
@@ -536,7 +539,7 @@ struct ProfileView: View {
 
     private var activePetSummary: String {
         guard let activePet else { return "Choose or create a pet" }
-        let details = [activePet.species, activePet.breed, activePet.age]
+        let details = [activePet.species, activePet.breed, activePet.sex, activePet.age]
             .compactMap { trimmed($0) }
         return details.isEmpty ? "Pet profile" : details.joined(separator: " · ")
     }
@@ -554,7 +557,7 @@ struct ProfileView: View {
     }
 
     private func petDetail(for pet: RemotePet) -> String {
-        [pet.species, pet.breed, pet.age]
+        [pet.species, pet.breed, pet.sex, pet.age]
             .compactMap { trimmed($0) }
             .joined(separator: " · ")
     }
@@ -575,6 +578,7 @@ private struct ProfilePetEditorSheet: View {
     @State private var name: String
     @State private var species: String
     @State private var breed: String
+    @State private var sex: String
     @State private var age: String
     @State private var weight: String
     @State private var bio: String
@@ -583,9 +587,9 @@ private struct ProfilePetEditorSheet: View {
     let title: String
     let isSaving: Bool
     let errorMessage: String?
-    let onSave: (String, String, String, String, String, String, String) async -> Bool
+    let onSave: (String, String, String, String, String, String, String, String) async -> Bool
 
-    init(title: String, pet: RemotePet?, isSaving: Bool, errorMessage: String?, onSave: @escaping (String, String, String, String, String, String, String) async -> Bool) {
+    init(title: String, pet: RemotePet?, isSaving: Bool, errorMessage: String?, onSave: @escaping (String, String, String, String, String, String, String, String) async -> Bool) {
         self.title = title
         self.isSaving = isSaving
         self.errorMessage = errorMessage
@@ -593,6 +597,7 @@ private struct ProfilePetEditorSheet: View {
         _name = State(initialValue: pet?.name ?? "")
         _species = State(initialValue: pet?.species?.isEmpty == false ? pet?.species ?? "Dog" : "Dog")
         _breed = State(initialValue: pet?.breed ?? "")
+        _sex = State(initialValue: pet?.sex ?? "")
         _age = State(initialValue: pet?.age ?? "")
         _weight = State(initialValue: pet?.weight ?? "")
         _bio = State(initialValue: pet?.bio ?? "")
@@ -638,6 +643,15 @@ private struct ProfilePetEditorSheet: View {
                             Divider().padding(.leading, 16)
                             inputRow(title: "Breed") {
                                 TextField("Optional", text: $breed)
+                            }
+                            Divider().padding(.leading, 16)
+                            inputRow(title: "Sex") {
+                                Picker("Sex", selection: $sex) {
+                                    Text("Not set").tag("")
+                                    Text("Male").tag("Male")
+                                    Text("Female").tag("Female")
+                                }
+                                .pickerStyle(.menu)
                             }
                             Divider().padding(.leading, 16)
                             inputRow(title: "Age") {
@@ -696,7 +710,7 @@ private struct ProfilePetEditorSheet: View {
 
                         Button {
                             Task {
-                                let didSave = await onSave(name, species, breed, age, weight, bio, notes)
+                                let didSave = await onSave(name, species, breed, sex, age, weight, bio, notes)
                                 if didSave {
                                     dismiss()
                                 }

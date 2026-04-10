@@ -8,6 +8,7 @@ struct FirstPetSetupView: View {
     @State private var name = ""
     @State private var species = "Dog"
     @State private var breed = ""
+    @State private var sex = ""
     @State private var age = ""
     @State private var weight = ""
     @State private var bio = ""
@@ -75,7 +76,7 @@ struct FirstPetSetupView: View {
 
                 Spacer()
 
-                Text("\(currentStep + 1)/7")
+                Text("\(currentStep + 1)/8")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
             }
@@ -122,13 +123,21 @@ struct FirstPetSetupView: View {
                 }
             case 3:
                 stepScaffold(
+                    eyebrow: "Sex",
+                    title: "What should we show?",
+                    subtitle: "Optional, just the simple label for now."
+                ) {
+                    sexPicker
+                }
+            case 4:
+                stepScaffold(
                     eyebrow: "Age",
                     title: "How old are they?",
                     subtitle: "Optional, any format is fine."
                 ) {
                     refinedTextField(text: $age, placeholder: "2 years")
                 }
-            case 4:
+            case 5:
                 stepScaffold(
                     eyebrow: "Weight",
                     title: "How much do they weigh?",
@@ -136,7 +145,7 @@ struct FirstPetSetupView: View {
                 ) {
                     refinedTextField(text: $weight, placeholder: "12 lb")
                 }
-            case 5:
+            case 6:
                 stepScaffold(
                     eyebrow: "Bio",
                     title: "How would you describe them?",
@@ -256,6 +265,25 @@ struct FirstPetSetupView: View {
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                     .shadow(color: Color.black.opacity(species == option.name ? 0.08 : 0.03), radius: species == option.name ? 16 : 8, y: 6)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var sexPicker: some View {
+        HStack(spacing: 12) {
+            ForEach(["", "Male", "Female"], id: \.self) { option in
+                Button {
+                    sex = option
+                } label: {
+                    Text(option.isEmpty ? "Not set" : option)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(sex == option ? .white : .primary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 54)
+                        .background(sex == option ? Color.black : Color(.systemBackground).opacity(0.9))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -410,11 +438,11 @@ struct FirstPetSetupView: View {
     }
 
     private var progressValue: CGFloat {
-        CGFloat(currentStep + 1) / 7
+        CGFloat(currentStep + 1) / 8
     }
 
     private var isLastStep: Bool {
-        currentStep == 6
+        currentStep == 7
     }
 
     private var canSave: Bool {
@@ -442,7 +470,7 @@ struct FirstPetSetupView: View {
     }
 
     private func updateFocus(for step: Int) {
-        isTextFieldFocused = step == 0 || step == 2 || step == 3 || step == 4
+        isTextFieldFocused = step == 0 || step == 2 || step == 4 || step == 5
     }
 
     private func advance() {
@@ -460,7 +488,7 @@ struct FirstPetSetupView: View {
         }
 
         withAnimation {
-            currentStep = min(currentStep + 1, 6)
+            currentStep = min(currentStep + 1, 7)
         }
     }
 
@@ -483,6 +511,7 @@ struct FirstPetSetupView: View {
             name: name,
             species: species,
             breed: breed,
+            sex: sex,
             age: age,
             weight: weight,
             bio: bio,

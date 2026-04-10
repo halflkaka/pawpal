@@ -6,6 +6,7 @@ struct RemotePet: Identifiable, Codable, Equatable {
     var name: String
     var species: String?
     var breed: String?
+    var sex: String?
     var age: String?
     var weight: String?
     var bio: String?
