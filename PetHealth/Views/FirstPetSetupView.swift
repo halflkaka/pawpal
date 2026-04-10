@@ -451,6 +451,7 @@ struct FirstPetSetupView: View {
             breed: breed,
             age: age,
             weight: weight,
+            bio: "",
             notes: notes
         ) else {
             if petsService.errorMessage == nil {

@@ -56,9 +56,9 @@ struct RemotePetsView: View {
             await petsService.loadPets(for: user.id)
         }
         .sheet(isPresented: $showingAddPet) {
-            RemoteAddPetSheet { name, species, breed, age, weight, notes in
+            RemoteAddPetSheet { name, species, breed, age, weight, bio, notes in
                 Task {
-                    await petsService.addPet(for: user.id, name: name, species: species, breed: breed, age: age, weight: weight, notes: notes)
+                    await petsService.addPet(for: user.id, name: name, species: species, breed: breed, age: age, weight: weight, bio: bio, notes: notes)
                 }
             }
         }
@@ -130,9 +130,10 @@ private struct RemoteAddPetSheet: View {
     @State private var breed = ""
     @State private var age = ""
     @State private var weight = ""
+    @State private var bio = ""
     @State private var notes = ""
 
-    let onSave: (String, String, String, String, String, String) -> Void
+    let onSave: (String, String, String, String, String, String, String) -> Void
 
     var body: some View {
         NavigationStack {
@@ -146,6 +147,8 @@ private struct RemoteAddPetSheet: View {
                 TextField("Breed", text: $breed)
                 TextField("Age", text: $age)
                 TextField("Weight", text: $weight)
+                TextField("Bio", text: $bio, axis: .vertical)
+                    .lineLimit(2...4)
                 TextField("Notes", text: $notes, axis: .vertical)
                     .lineLimit(3...6)
             }
@@ -157,7 +160,7 @@ private struct RemoteAddPetSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        onSave(name, species, breed, age, weight, notes)
+                        onSave(name, species, breed, age, weight, bio, notes)
                         dismiss()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

@@ -8,6 +8,7 @@ struct RemotePet: Identifiable, Codable, Equatable {
     var breed: String?
     var age: String?
     var weight: String?
+    var bio: String?
     var notes: String?
     let created_at: Date
 }
