@@ -26,127 +26,117 @@ struct ProfileView: View {
     }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 24) {
-                if let activePet {
-                    VStack(alignment: .leading, spacing: 14) {
-                        petHeader(activePet)
-                        petActionBar(activePet)
-                        petQuickFacts(activePet)
+        List {
+            if let activePet {
+                Section {
+                    petHeader(activePet)
+                        .listRowInsets(EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
 
-                        if let bio = trimmed(activePet.bio) {
-                            simpleMultilineRow(title: "Bio", value: bio)
-                        }
+                    petQuickFacts(activePet)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
 
-                        if let statusMessage {
-                            statusBanner(text: statusMessage, tint: .green, icon: "checkmark.circle")
-                        } else if let errorMessage = petsService.errorMessage {
-                            statusBanner(text: errorMessage, tint: .red, icon: "exclamationmark.circle")
-                        } else if petsService.isLoading && petsService.pets.isEmpty {
-                            loadingBanner("Loading pets")
-                        }
+                    if let bio = trimmed(activePet.bio) {
+                        simpleMultilineRow(title: "Bio", value: bio)
+                            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
                     }
-                    .profileCardStyle()
-                } else {
-                    VStack(alignment: .leading, spacing: 12) {
+
+                    petActionBar(activePet)
+                        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
+
+                    if let statusMessage {
+                        statusBanner(text: statusMessage, tint: .green, icon: "checkmark.circle")
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    } else if let errorMessage = petsService.errorMessage {
+                        statusBanner(text: errorMessage, tint: .red, icon: "exclamationmark.circle")
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    } else if petsService.isLoading && petsService.pets.isEmpty {
+                        loadingBanner("Loading pets")
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    }
+                }
+            } else {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
                         Text("No Active Pet")
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(.headline)
                         Text("Choose or add a pet to see profile details.")
                             .foregroundStyle(.secondary)
                         Button("Add Pet") {
                             showingAddPet = true
                         }
+                        .padding(.top, 4)
                     }
-                    .profileCardStyle()
+                    .padding(.vertical, 4)
+                }
+            }
+
+            Section("Pets") {
+                if petsService.pets.isEmpty, petsService.isLoading {
+                    loadingRow("Loading pets")
+                } else if petsService.pets.isEmpty {
+                    emptyRow("No pets yet")
+                } else {
+                    ForEach(petsService.pets) { pet in
+                        petListRow(pet)
+                    }
                 }
 
-                sectionBlock(title: "Pets") {
-                    VStack(spacing: 0) {
-                        if petsService.pets.isEmpty, petsService.isLoading {
-                            loadingRow("Loading pets")
-                        } else if petsService.pets.isEmpty {
-                            emptyRow("No pets yet")
-                        } else {
-                            ForEach(Array(petsService.pets.enumerated()), id: \.element.id) { index, pet in
-                                petListRow(pet)
-                                if index < petsService.pets.count - 1 {
-                                    Divider().padding(.leading, 58)
-                                }
-                            }
+                Button {
+                    showingAddPet = true
+                } label: {
+                    Label("Add Pet", systemImage: "plus")
+                }
+            }
+
+            Section("Account") {
+                Button {
+                    showingEditAccount = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: 30))
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(accountDisplayName)
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Text(profileHandle)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
                         }
-                    }
-                    .profileCardStyle(padding: 0)
 
-                    Button {
-                        showingAddPet = true
-                    } label: {
-                        Label("Add Pet", systemImage: "plus")
-                            .font(.system(size: 15, weight: .semibold))
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.tertiary)
                     }
+                    .padding(.vertical, 4)
                 }
+                .buttonStyle(.plain)
 
-                sectionBlock(title: "Account") {
-                    VStack(spacing: 0) {
-                        Button {
-                            showingEditAccount = true
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "person.crop.circle.fill")
-                                    .font(.system(size: 30))
-                                    .foregroundStyle(.secondary)
+                detailLine(title: "Display Name", value: accountDisplayName)
+                detailLine(title: "Username", value: profile?.username ?? "Not set")
+                detailLine(title: "Bio", value: profile?.bio ?? "Not set", multiline: true)
+                detailLine(title: "Email", value: user.email ?? "", multiline: true)
 
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(accountDisplayName)
-                                        .font(.system(size: 17, weight: .semibold))
-                                        .foregroundStyle(.primary)
-                                    Text(profileHandle)
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer()
-
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(16)
-                        }
-                        .buttonStyle(.plain)
-
-                        Divider().padding(.leading, 16)
-                        detailLine(title: "Display Name", value: accountDisplayName)
-                        Divider().padding(.leading, 16)
-                        detailLine(title: "Username", value: profile?.username ?? "Not set")
-                        Divider().padding(.leading, 16)
-                        detailLine(title: "Bio", value: profile?.bio ?? "Not set", multiline: true)
-                        Divider().padding(.leading, 16)
-                        detailLine(title: "Email", value: user.email ?? "", multiline: true)
-                    }
-                    .profileCardStyle(padding: 0)
-
-                    if isLoadingProfile {
-                        loadingBanner("Loading account")
-                    } else if let profileErrorMessage {
-                        statusBanner(text: profileErrorMessage, tint: .red, icon: "exclamationmark.circle")
-                    }
+                if isLoadingProfile {
+                    loadingBanner("Loading account")
+                } else if let profileErrorMessage {
+                    statusBanner(text: profileErrorMessage, tint: .red, icon: "exclamationmark.circle")
                 }
+            }
 
+            Section {
                 Button(role: .destructive) {
                     authManager.signOut()
                 } label: {
                     Text("Sign Out")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
-                .tint(.red)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 32)
         }
-        .background(Color(.systemGroupedBackground))
+        .listStyle(.insetGrouped)
         .navigationTitle("Profile")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -235,23 +225,23 @@ struct ProfileView: View {
     }
 
     private func petHeader(_ pet: RemotePet) -> some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(spacing: 12) {
             Image(systemName: iconName(for: pet.species ?? ""))
-                .font(.system(size: 28))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 56, height: 56)
-                .background(Color.accentColor.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .font(.system(size: 26))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(pet.name)
-                    .font(.system(size: 28, weight: .semibold))
+                    .font(.system(size: 24, weight: .semibold))
                 Text(activePetSummary)
-                    .font(.system(size: 15))
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
                 if let ownerLine {
                     Text(ownerLine)
-                        .font(.system(size: 13))
+                        .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -261,14 +251,14 @@ struct ProfileView: View {
     }
 
     private func petActionBar(_ pet: RemotePet) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Button {
                 editingPet = pet
             } label: {
-                Label("Edit", systemImage: "square.and.pencil")
-                    .frame(maxWidth: .infinity)
+                Label("Edit Pet", systemImage: "square.and.pencil")
             }
-            .buttonStyle(.bordered)
+
+            Spacer()
 
             Menu {
                 ForEach(petsService.pets) { pet in
@@ -278,25 +268,22 @@ struct ProfileView: View {
                     }
                 }
             } label: {
-                Label("Switch", systemImage: "arrow.left.arrow.right")
-                    .frame(maxWidth: .infinity)
+                Label("Switch Pet", systemImage: "arrow.left.arrow.right")
             }
-            .buttonStyle(.bordered)
         }
         .labelStyle(.titleAndIcon)
+        .font(.subheadline)
     }
 
     private func petQuickFacts(_ pet: RemotePet) -> some View {
         VStack(spacing: 0) {
             ForEach(Array(petDetailRows(for: pet).enumerated()), id: \.offset) { index, row in
                 if index > 0 {
-                    Divider().padding(.leading, 16)
+                    Divider()
                 }
                 detailLine(title: row.title, value: row.value)
             }
         }
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func petListRow(_ pet: RemotePet) -> some View {
@@ -388,17 +375,6 @@ struct ProfileView: View {
         )
     }
 
-    @ViewBuilder
-    private func sectionBlock<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-            content()
-        }
-    }
-
     private func detailLine(title: String, value: String, multiline: Bool = false) -> some View {
         HStack(alignment: multiline ? .top : .firstTextBaseline, spacing: 16) {
             Text(title)
@@ -409,8 +385,7 @@ struct ProfileView: View {
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: multiline)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.vertical, 6)
     }
 
     private func simpleMultilineRow(title: String, value: String) -> some View {
@@ -453,10 +428,7 @@ struct ProfileView: View {
             Text(text)
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .font(.footnote)
     }
 
     private func statusBanner(text: String, tint: Color, icon: String) -> some View {
@@ -466,10 +438,7 @@ struct ProfileView: View {
             Text(text)
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .font(.footnote)
     }
 
     private func loadProfile() async {
@@ -544,15 +513,6 @@ struct ProfileView: View {
         user.email?.components(separatedBy: "@").first ?? "User"
     }
 
-}
-
-private extension View {
-    func profileCardStyle(padding: CGFloat = 18) -> some View {
-        self
-            .padding(padding)
-            .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
 }
 
 private struct ProfilePetEditorSheet: View {
