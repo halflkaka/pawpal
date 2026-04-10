@@ -252,21 +252,29 @@ struct ProfileView: View {
         VStack(alignment: .leading, spacing: 12) {
             sectionLabel("Pet Details")
 
-            VStack(spacing: 0) {
-                detailRow(title: "Species", value: activePet?.species ?? "Not set")
-                Divider().padding(.leading, 16)
-                detailRow(title: "Breed", value: activePet?.breed ?? "Not set")
-                Divider().padding(.leading, 16)
-                detailRow(title: "Sex", value: activePet?.sex ?? "Not set")
-                Divider().padding(.leading, 16)
-                detailRow(title: "Age", value: activePet?.age ?? "Not set")
-                Divider().padding(.leading, 16)
-                detailRow(title: "Weight", value: activePet?.weight ?? "Not set")
-                Divider().padding(.leading, 16)
-                detailRow(title: "Home City", value: activePet?.home_city ?? "Not set")
+            if let activePet {
+                VStack(spacing: 0) {
+                    ForEach(Array(petDetailRows(for: activePet).enumerated()), id: \.offset) { index, row in
+                        detailRow(title: row.title, value: row.value)
+
+                        if index < petDetailRows(for: activePet).count - 1 {
+                            Divider().padding(.leading, 16)
+                        }
+                    }
+                }
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Choose or add a pet to see profile details.")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
-            .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
     }
 
@@ -552,9 +560,20 @@ struct ProfileView: View {
     }
 
     private func petDetail(for pet: RemotePet) -> String {
-        [pet.species, pet.breed, pet.sex, pet.age, pet.home_city]
+        [pet.species, pet.breed]
             .compactMap { trimmed($0) }
             .joined(separator: " · ")
+    }
+
+    private func petDetailRows(for pet: RemotePet) -> [(title: String, value: String)] {
+        [
+            ("Species", trimmed(pet.species) ?? "Not set"),
+            ("Breed", trimmed(pet.breed) ?? "Not set"),
+            ("Sex", trimmed(pet.sex) ?? "Not set"),
+            ("Age", trimmed(pet.age) ?? "Not set"),
+            ("Weight", trimmed(pet.weight) ?? "Not set"),
+            ("Hometown", trimmed(pet.home_city) ?? "Not set")
+        ]
     }
 
     private func trimmed(_ value: String?) -> String? {
