@@ -464,11 +464,13 @@ struct ProfileView: View {
     }
 
     private func detailRow(title: String, value: String) -> some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .center, spacing: 16) {
             Text(title)
                 .foregroundStyle(.primary)
             Spacer(minLength: 16)
             Text(value)
+                .lineLimit(1)
+                .truncationMode(.tail)
                 .multilineTextAlignment(.trailing)
                 .foregroundStyle(.secondary)
         }
@@ -542,7 +544,7 @@ struct ProfileView: View {
 
     private var activePetSummary: String {
         guard let activePet else { return "Choose or create a pet" }
-        let details = [activePet.species, activePet.breed, activePet.sex, activePet.age, activePet.home_city]
+        let details = [activePet.species, activePet.breed]
             .compactMap { trimmed($0) }
         return details.isEmpty ? "Pet profile" : details.joined(separator: " · ")
     }
@@ -567,11 +569,8 @@ struct ProfileView: View {
 
     private func petDetailRows(for pet: RemotePet) -> [(title: String, value: String)] {
         [
-            ("Species", trimmed(pet.species) ?? "Not set"),
             ("Breed", trimmed(pet.breed) ?? "Not set"),
-            ("Sex", trimmed(pet.sex) ?? "Not set"),
             ("Age", trimmed(pet.age) ?? "Not set"),
-            ("Weight", trimmed(pet.weight) ?? "Not set"),
             ("Hometown", trimmed(pet.home_city) ?? "Not set")
         ]
     }
