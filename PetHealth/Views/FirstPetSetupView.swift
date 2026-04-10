@@ -10,6 +10,7 @@ struct FirstPetSetupView: View {
     @State private var breed = ""
     @State private var age = ""
     @State private var weight = ""
+    @State private var bio = ""
     @State private var notes = ""
     @State private var isSaving = false
     @State private var isCompleting = false
@@ -74,7 +75,7 @@ struct FirstPetSetupView: View {
 
                 Spacer()
 
-                Text("\(currentStep + 1)/6")
+                Text("\(currentStep + 1)/7")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
             }
@@ -134,6 +135,14 @@ struct FirstPetSetupView: View {
                     subtitle: "Optional, add a unit if you want."
                 ) {
                     refinedTextField(text: $weight, placeholder: "12 lb")
+                }
+            case 5:
+                stepScaffold(
+                    eyebrow: "Bio",
+                    title: "How would you describe them?",
+                    subtitle: "Optional, keep it short and warm."
+                ) {
+                    bioEditor
                 }
             default:
                 stepScaffold(
@@ -251,6 +260,31 @@ struct FirstPetSetupView: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private var bioEditor: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .fill(Color(.systemBackground).opacity(0.9))
+                .shadow(color: Color.black.opacity(0.04), radius: 18, y: 8)
+
+            TextEditor(text: $bio)
+                .scrollContentBackground(.hidden)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 18)
+                .frame(minHeight: 180)
+                .font(.system(size: 18))
+
+            if bio.isEmpty {
+                Text("A little intro")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 28)
+                    .allowsHitTesting(false)
+            }
+        }
+        .frame(height: 180)
     }
 
     private var notesEditor: some View {
@@ -376,11 +410,11 @@ struct FirstPetSetupView: View {
     }
 
     private var progressValue: CGFloat {
-        CGFloat(currentStep + 1) / 6
+        CGFloat(currentStep + 1) / 7
     }
 
     private var isLastStep: Bool {
-        currentStep == 5
+        currentStep == 6
     }
 
     private var canSave: Bool {
@@ -426,7 +460,7 @@ struct FirstPetSetupView: View {
         }
 
         withAnimation {
-            currentStep = min(currentStep + 1, 5)
+            currentStep = min(currentStep + 1, 6)
         }
     }
 
@@ -451,7 +485,7 @@ struct FirstPetSetupView: View {
             breed: breed,
             age: age,
             weight: weight,
-            bio: "",
+            bio: bio,
             notes: notes
         ) else {
             if petsService.errorMessage == nil {
