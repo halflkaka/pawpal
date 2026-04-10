@@ -124,8 +124,11 @@ struct ProfileView: View {
     private var activePetSection: some View {
         if let activePet {
             Section {
+                petSummaryHeader(activePet)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .listRowBackground(Color.clear)
+
                 petOverview(activePet)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
 
                 if let bio = trimmed(activePet.bio) {
                     simpleMultilineRow(title: "Bio", value: bio)
@@ -204,42 +207,51 @@ struct ProfileView: View {
         }
     }
 
+    private func petSummaryHeader(_ pet: RemotePet) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Active Pet")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(pet.name)
+                .font(.largeTitle.bold())
+            Text(activePetSummary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 4)
+    }
+
     private func petOverview(_ pet: RemotePet) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                Image(systemName: iconName(for: pet.species ?? ""))
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 42, height: 42)
-                    .background(Color.accentColor.opacity(0.12))
-                    .clipShape(.rect(cornerRadius: 12))
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.12))
+                        .frame(width: 52, height: 52)
+
+                    Image(systemName: iconName(for: pet.species ?? ""))
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(pet.name)
-                        .font(.title3.weight(.semibold))
-                    Text(activePetSummary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
                     if let ownerLine {
                         Text(ownerLine)
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
+                    Text(trimmed(pet.home_city) ?? "Hometown not set")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
                 }
 
                 Spacer()
             }
+            .padding(.horizontal, 2)
 
-            VStack(spacing: 0) {
-                ForEach(Array(petDetailRows(for: pet).enumerated()), id: \.offset) { index, row in
-                    if index > 0 {
-                        Divider()
-                    }
-                    detailLine(title: row.title, value: row.value)
-                }
-            }
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            healthFactGrid(for: pet)
         }
+        .padding(.vertical, 4)
     }
 
     private func petActionBar(_ pet: RemotePet) -> some View {
@@ -248,6 +260,7 @@ struct ProfileView: View {
                 editingPet = pet
             } label: {
                 Label("Edit Pet", systemImage: "square.and.pencil")
+                    .frame(maxWidth: .infinity)
             }
 
             Menu {
@@ -259,6 +272,7 @@ struct ProfileView: View {
                 }
             } label: {
                 Label("Switch Pet", systemImage: "arrow.left.arrow.right")
+                    .frame(maxWidth: .infinity)
             }
         }
         .buttonStyle(.bordered)
@@ -382,6 +396,36 @@ struct ProfileView: View {
                 }
             }
         )
+    }
+
+    private func healthFactGrid(for pet: RemotePet) -> some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                factTile(title: "Breed", value: trimmed(pet.breed) ?? "Not set")
+                factTile(title: "Age", value: trimmed(pet.age) ?? "Not set")
+            }
+
+            HStack(spacing: 12) {
+                factTile(title: "Weight", value: trimmed(pet.weight) ?? "Not set")
+                factTile(title: "Hometown", value: trimmed(pet.home_city) ?? "Not set", alignment: .leading)
+            }
+        }
+    }
+
+    private func factTile(title: String, value: String, alignment: HorizontalAlignment = .leading) -> some View {
+        VStack(alignment: alignment, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 76, alignment: alignment == .leading ? .topLeading : .topTrailing)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func detailLine(title: String, value: String, multiline: Bool = false) -> some View {
