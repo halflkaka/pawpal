@@ -581,6 +581,7 @@ private struct ProfilePetEditorSheet: View {
     @State private var selectedCountry: String
     @State private var selectedRegion: String
     @State private var selectedCity: String
+    @State private var showingLocationPicker = false
     @State private var bio: String
 
     private let ageUnits = ["years", "months"]
@@ -658,10 +659,18 @@ private struct ProfilePetEditorSheet: View {
                                     Text("Other").tag("Other")
                                 }
                                 .pickerStyle(.menu)
+                                .onChange(of: species) { _, newValue in
+                                    breed = breedOptions(for: newValue).first ?? "Mixed"
+                                }
                             }
                             Divider().padding(.leading, 16)
                             inputRow(title: "Breed") {
-                                TextField("Optional", text: $breed)
+                                Picker("Breed", selection: $breed) {
+                                    ForEach(breedOptions(for: species), id: \.self) { option in
+                                        Text(option).tag(option)
+                                    }
+                                }
+                                .pickerStyle(.menu)
                             }
                             Divider().padding(.leading, 16)
                             inputRow(title: "Sex") {
@@ -701,39 +710,20 @@ private struct ProfilePetEditorSheet: View {
                                 }
                             }
                             Divider().padding(.leading, 16)
-                            inputRow(title: "Country") {
-                                Picker("Country", selection: $selectedCountry) {
-                                    ForEach(countries, id: \.self) { country in
-                                        Text(country).tag(country)
+                            Button {
+                                showingLocationPicker = true
+                            } label: {
+                                inputRow(title: "Hometown") {
+                                    HStack(spacing: 8) {
+                                        Text(locationSummary)
+                                            .foregroundStyle(.secondary)
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(.tertiary)
                                     }
                                 }
-                                .pickerStyle(.menu)
-                                .onChange(of: selectedCountry) { _, newValue in
-                                    selectedRegion = regions(for: newValue).first ?? ""
-                                    selectedCity = cities(for: newValue, region: selectedRegion).first ?? ""
-                                }
                             }
-                            Divider().padding(.leading, 16)
-                            inputRow(title: "State") {
-                                Picker("State", selection: $selectedRegion) {
-                                    ForEach(regions(for: selectedCountry), id: \.self) { region in
-                                        Text(region).tag(region)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                .onChange(of: selectedRegion) { _, newValue in
-                                    selectedCity = cities(for: selectedCountry, region: newValue).first ?? ""
-                                }
-                            }
-                            Divider().padding(.leading, 16)
-                            inputRow(title: "City") {
-                                Picker("City", selection: $selectedCity) {
-                                    ForEach(cities(for: selectedCountry, region: selectedRegion), id: \.self) { city in
-                                        Text(city).tag(city)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
+                            .buttonStyle(.plain)
                         }
                         .background(Color(.systemBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -804,6 +794,43 @@ private struct ProfilePetEditorSheet: View {
                     Button("Cancel") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showingLocationPicker) {
+                NavigationStack {
+                    Form {
+                        Picker("Country", selection: $selectedCountry) {
+                            ForEach(countries, id: \.self) { country in
+                                Text(country).tag(country)
+                            }
+                        }
+                        .onChange(of: selectedCountry) { _, newValue in
+                            selectedRegion = regions(for: newValue).first ?? ""
+                            selectedCity = cities(for: newValue, region: selectedRegion).first ?? ""
+                        }
+
+                        Picker("State", selection: $selectedRegion) {
+                            ForEach(regions(for: selectedCountry), id: \.self) { region in
+                                Text(region).tag(region)
+                            }
+                        }
+                        .onChange(of: selectedRegion) { _, newValue in
+                            selectedCity = cities(for: selectedCountry, region: newValue).first ?? ""
+                        }
+
+                        Picker("City", selection: $selectedCity) {
+                            ForEach(cities(for: selectedCountry, region: selectedRegion), id: \.self) { city in
+                                Text(city).tag(city)
+                            }
+                        }
+                    }
+                    .navigationTitle("Choose Hometown")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingLocationPicker = false }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -838,6 +865,17 @@ private struct ProfilePetEditorSheet: View {
         hometownTree.keys.sorted()
     }
 
+    private func breedOptions(for species: String) -> [String] {
+        switch species {
+        case "Dog":
+            return ["Mixed", "Golden Retriever", "Labrador", "Poodle", "French Bulldog", "Corgi", "Shiba Inu"]
+        case "Cat":
+            return ["Mixed", "British Shorthair", "Ragdoll", "Siamese", "Maine Coon", "American Shorthair"]
+        default:
+            return ["Mixed", "Other"]
+        }
+    }
+
     private func regions(for country: String) -> [String] {
         hometownTree[country]?.keys.sorted() ?? []
     }
@@ -851,6 +889,15 @@ private struct ProfilePetEditorSheet: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
+    }
+
+    private var locationSummary: String {
+        let city = selectedCity.isEmpty ? "City" : selectedCity
+        let regionCode = abbreviation(for: selectedRegion)
+        let countryCode = abbreviation(for: selectedCountry)
+        return [city, regionCode, countryCode]
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
     }
 
     private static func splitMeasurement(_ raw: String?, fallbackUnit: String) -> (value: String, unit: String) {
@@ -882,6 +929,18 @@ private struct ProfilePetEditorSheet: View {
             return (parts[0], parts[1], parts[2])
         }
         return defaults
+    }
+
+    private func abbreviation(for value: String) -> String {
+        switch value {
+        case "United States": return "US"
+        case "Canada": return "CA"
+        case "Washington": return "WA"
+        case "California": return "CA"
+        case "British Columbia": return "BC"
+        case "Ontario": return "ON"
+        default: return value
+        }
     }
 
     private func iconName(for species: String) -> String {
