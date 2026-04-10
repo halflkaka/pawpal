@@ -27,7 +27,7 @@ struct ProfileView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 18) {
                 petHero
                 petsSection
                 petDetailsSection
@@ -127,9 +127,7 @@ struct ProfileView: View {
     }
 
     private var petHero: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionLabel("Active Pet")
-
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 14) {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color(.secondarySystemBackground))
@@ -206,9 +204,8 @@ struct ProfileView: View {
     }
 
     private var petsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                sectionLabel("My Pets")
                 Spacer()
                 Button("Add") {
                     showingAddPet = true
@@ -250,9 +247,7 @@ struct ProfileView: View {
     }
 
     private var petDetailsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("Pet Details")
-
+        VStack(alignment: .leading, spacing: 10) {
             if let activePet {
                 VStack(spacing: 0) {
                     ForEach(Array(petDetailRows(for: activePet).enumerated()), id: \.offset) { index, row in
@@ -339,9 +334,7 @@ struct ProfileView: View {
     }
 
     private var accountSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("Account")
-
+        VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 14) {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -401,9 +394,7 @@ struct ProfileView: View {
     }
 
     private var signOutSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("Session")
-
+        VStack(alignment: .leading, spacing: 10) {
             Button {
                 authManager.signOut()
             } label: {
@@ -455,13 +446,6 @@ struct ProfileView: View {
                 }
             }
         )
-    }
-
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 4)
     }
 
     private func detailRow(title: String, value: String) -> some View {
