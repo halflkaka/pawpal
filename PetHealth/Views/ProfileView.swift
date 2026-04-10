@@ -26,8 +26,8 @@ struct ProfileView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 20) {
                 petHero
                 petsSection
                 petDetailsSection
@@ -35,10 +35,16 @@ struct ProfileView: View {
                 signOutSection
             }
             .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 28)
+            .padding(.top, 16)
+            .padding(.bottom, 32)
         }
-        .background(Color(.systemGroupedBackground))
+        .background(
+            LinearGradient(
+                colors: [Color(.systemGroupedBackground), Color(.secondarySystemGroupedBackground)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
         .navigationTitle("Profile")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -127,31 +133,43 @@ struct ProfileView: View {
     }
 
     private var petHero: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 14) {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
-                    .frame(width: 88, height: 88)
-                    .overlay {
-                        Image(systemName: petIconName)
-                            .font(.system(size: 30))
-                            .foregroundStyle(.gray)
-                    }
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .center, spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.orange.opacity(0.18), Color.pink.opacity(0.10)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 92, height: 92)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(activePet?.name ?? "No Active Pet")
-                        .font(.system(size: 26, weight: .semibold))
-                    Text(activePetSummary)
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                    if let ownerLine {
-                        Text(ownerLine)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.tertiary)
-                    }
+                    Image(systemName: petIconName)
+                        .font(.system(size: 32, weight: .medium))
+                        .foregroundStyle(.primary.opacity(0.7))
                 }
 
-                Spacer()
+                VStack(alignment: .leading, spacing: 8) {
+                    if let ownerLine {
+                        Text(ownerLine.uppercased())
+                            .font(.system(size: 11, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Text(activePet?.name ?? "No Active Pet")
+                        .font(.system(size: 28, weight: .semibold))
+                        .tracking(-0.4)
+
+                    Text(activePetSummary)
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
             }
 
             if let activePet, let bio = trimmed(activePet.bio) {
@@ -162,16 +180,12 @@ struct ProfileView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if petsService.isLoading && petsService.pets.isEmpty {
-                feedbackCard(icon: nil, text: "Loading pets", tint: .secondary, showsProgress: true)
-            }
-
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 if let activePet {
                     Button {
                         editingPet = activePet
                     } label: {
-                        actionPill(title: "Edit Pet", systemImage: "square.and.pencil")
+                        actionPill(title: "Edit", systemImage: "square.and.pencil")
                     }
                     .buttonStyle(.plain)
                 }
@@ -185,32 +199,41 @@ struct ProfileView: View {
                             }
                         }
                     } label: {
-                        actionPill(title: activePet == nil ? "Choose Pet" : "Switch Pet", systemImage: "arrow.left.arrow.right")
+                        actionPill(title: activePet == nil ? "Choose" : "Switch", systemImage: "arrow.left.arrow.right")
                     }
                     .buttonStyle(.plain)
                 }
             }
 
-            if let statusMessage {
-                feedbackCard(icon: "checkmark.circle", text: statusMessage, tint: .green)
+            if petsService.isLoading && petsService.pets.isEmpty {
+                feedbackCard(icon: nil, text: "Loading pets", tint: .secondary, showsProgress: true)
+            } else if let statusMessage {
+                feedbackCard(icon: "checkmark.circle.fill", text: statusMessage, tint: .green)
             } else if let errorMessage = petsService.errorMessage {
-                feedbackCard(icon: "exclamationmark.circle", text: errorMessage, tint: .red)
+                feedbackCard(icon: "exclamationmark.circle.fill", text: errorMessage, tint: .red)
             }
         }
-        .padding(18)
+        .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(Color.white.opacity(0.45), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.05), radius: 18, y: 8)
     }
 
     private var petsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
+                Text("Pets")
+                    .font(.system(size: 18, weight: .semibold))
                 Spacer()
                 Button("Add") {
                     showingAddPet = true
                 }
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 15, weight: .semibold))
             }
 
             VStack(alignment: .leading, spacing: 0) {
@@ -241,25 +264,26 @@ struct ProfileView: View {
                     }
                 }
             }
-            .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Color.white.opacity(0.4), lineWidth: 1)
+            }
         }
     }
 
     private var petDetailsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let activePet {
-                VStack(spacing: 0) {
-                    ForEach(Array(petDetailRows(for: activePet).enumerated()), id: \.offset) { index, row in
-                        detailRow(title: row.title, value: row.value)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Profile")
+                .font(.system(size: 18, weight: .semibold))
 
-                        if index < petDetailRows(for: activePet).count - 1 {
-                            Divider().padding(.leading, 16)
-                        }
+            if let activePet {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    ForEach(Array(petDetailRows(for: activePet).enumerated()), id: \.offset) { _, row in
+                        detailCard(title: row.title, value: row.value)
                     }
                 }
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Choose or add a pet to see profile details.")
@@ -268,8 +292,12 @@ struct ProfileView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(Color.white.opacity(0.4), lineWidth: 1)
+                }
             }
         }
     }
@@ -334,7 +362,10 @@ struct ProfileView: View {
     }
 
     private var accountSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Account")
+                .font(.system(size: 18, weight: .semibold))
+
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 14) {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -387,29 +418,36 @@ struct ProfileView: View {
                 .background(Color(.secondarySystemBackground).opacity(0.45))
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
-            .padding(18)
-            .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(20)
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Color.white.opacity(0.4), lineWidth: 1)
+            }
         }
     }
 
     private var signOutSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                authManager.signOut()
-            } label: {
-                HStack {
-                    Text("Sign Out")
-                        .foregroundStyle(.red)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 16)
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        Button {
+            authManager.signOut()
+        } label: {
+            HStack {
+                Text("Sign Out")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.red)
+                Spacer()
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(Color.white.opacity(0.35), lineWidth: 1)
+            }
         }
+        .buttonStyle(.plain)
     }
 
     private var accountDisplayName: String {
@@ -449,34 +487,52 @@ struct ProfileView: View {
     }
 
     private func detailRow(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .top, spacing: 16) {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.tertiary)
-                .textCase(.uppercase)
-
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 16)
             Text(value)
-                .font(.system(size: 16))
+                .font(.system(size: 15))
+                .multilineTextAlignment(.trailing)
                 .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
     }
 
+    private func detailCard(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(.tertiary)
+
+            Text(value)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+        .background(Color(.secondarySystemBackground).opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
     private func actionPill(title: String, systemImage: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 13, weight: .semibold))
             Text(title)
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 15, weight: .semibold))
         }
         .foregroundStyle(.primary)
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.vertical, 11)
+        .background(Color(.secondarySystemBackground).opacity(0.9))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func feedbackCard(icon: String?, text: String, tint: Color, showsProgress: Bool = false) -> some View {
@@ -490,14 +546,14 @@ struct ProfileView: View {
             }
 
             Text(text)
-                .font(.system(size: 13))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(Color(.secondarySystemBackground).opacity(0.45))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color(.secondarySystemBackground).opacity(0.65))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func loadProfile() async {
@@ -570,6 +626,10 @@ struct ProfileView: View {
 
     private var fallbackName: String {
         user.email?.components(separatedBy: "@").first ?? "User"
+    }
+
+    private var cardBackground: some ShapeStyle {
+        .regularMaterial
     }
 }
 
