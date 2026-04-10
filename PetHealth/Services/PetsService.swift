@@ -41,7 +41,6 @@ final class PetsService: ObservableObject {
             let name: String
             let species: String?
             let breed: String?
-            let sex: String?
             let age_text: String?
             let weight: String?
             let home_city: String?
@@ -53,7 +52,6 @@ final class PetsService: ObservableObject {
             name: normalizeRequired(name),
             species: normalizeOptional(species),
             breed: normalizeOptional(breed),
-            sex: normalizeOptional(sex),
             age_text: normalizeOptional(age),
             weight: normalizeOptional(weight),
             home_city: normalizeOptional(homeCity),
@@ -84,7 +82,6 @@ final class PetsService: ObservableObject {
             let name: String
             let species: String?
             let breed: String?
-            let sex: String?
             let age_text: String?
             let weight: String?
             let home_city: String?
@@ -97,7 +94,6 @@ final class PetsService: ObservableObject {
             name: normalizeRequired(pet.name),
             species: normalizeOptional(pet.species),
             breed: normalizeOptional(pet.breed),
-            sex: normalizeOptional(pet.sex),
             age_text: normalizeOptional(pet.age),
             weight: normalizeOptional(pet.weight),
             home_city: normalizeOptional(pet.home_city),
