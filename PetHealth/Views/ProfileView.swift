@@ -578,12 +578,23 @@ private struct ProfilePetEditorSheet: View {
     @State private var ageUnit: String
     @State private var weightValue: String
     @State private var weightUnit: String
-    @State private var homeCity: String
+    @State private var selectedCountry: String
+    @State private var selectedRegion: String
+    @State private var selectedCity: String
     @State private var bio: String
 
     private let ageUnits = ["years", "months"]
     private let weightUnits = ["lb", "kg"]
-    private let hometownOptions = ["Seattle", "Bellevue", "Lynnwood", "Redmond", "Kirkland", "Everett"]
+    private let hometownTree: [String: [String: [String]]] = [
+        "United States": [
+            "Washington": ["Seattle", "Bellevue", "Lynnwood", "Redmond", "Kirkland", "Everett"],
+            "California": ["San Francisco", "San Jose", "Los Angeles", "San Diego"]
+        ],
+        "Canada": [
+            "British Columbia": ["Vancouver", "Burnaby", "Richmond"],
+            "Ontario": ["Toronto", "Ottawa", "Waterloo"]
+        ]
+    ]
 
     let title: String
     let isSaving: Bool
@@ -605,7 +616,10 @@ private struct ProfilePetEditorSheet: View {
         let parsedWeight = Self.splitMeasurement(pet?.weight, fallbackUnit: "lb")
         _weightValue = State(initialValue: parsedWeight.value)
         _weightUnit = State(initialValue: parsedWeight.unit)
-        _homeCity = State(initialValue: pet?.home_city?.isEmpty == false ? pet?.home_city ?? "Seattle" : "Seattle")
+        let parsedLocation = Self.splitLocation(pet?.home_city)
+        _selectedCountry = State(initialValue: parsedLocation.country)
+        _selectedRegion = State(initialValue: parsedLocation.region)
+        _selectedCity = State(initialValue: parsedLocation.city)
         _bio = State(initialValue: pet?.bio ?? "")
     }
 
@@ -687,9 +701,34 @@ private struct ProfilePetEditorSheet: View {
                                 }
                             }
                             Divider().padding(.leading, 16)
-                            inputRow(title: "Hometown") {
-                                Picker("Hometown", selection: $homeCity) {
-                                    ForEach(hometownOptions, id: \.self) { city in
+                            inputRow(title: "Country") {
+                                Picker("Country", selection: $selectedCountry) {
+                                    ForEach(countries, id: \.self) { country in
+                                        Text(country).tag(country)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .onChange(of: selectedCountry) { _, newValue in
+                                    selectedRegion = regions(for: newValue).first ?? ""
+                                    selectedCity = cities(for: newValue, region: selectedRegion).first ?? ""
+                                }
+                            }
+                            Divider().padding(.leading, 16)
+                            inputRow(title: "State") {
+                                Picker("State", selection: $selectedRegion) {
+                                    ForEach(regions(for: selectedCountry), id: \.self) { region in
+                                        Text(region).tag(region)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .onChange(of: selectedRegion) { _, newValue in
+                                    selectedCity = cities(for: selectedCountry, region: newValue).first ?? ""
+                                }
+                            }
+                            Divider().padding(.leading, 16)
+                            inputRow(title: "City") {
+                                Picker("City", selection: $selectedCity) {
+                                    ForEach(cities(for: selectedCountry, region: selectedRegion), id: \.self) { city in
                                         Text(city).tag(city)
                                     }
                                 }
@@ -730,7 +769,7 @@ private struct ProfilePetEditorSheet: View {
 
                         Button {
                             Task {
-                                let didSave = await onSave(name, species, breed, sex, composedAge, composedWeight, homeCity, bio)
+                                let didSave = await onSave(name, species, breed, sex, composedAge, composedWeight, composedLocation, bio)
                                 if didSave {
                                     dismiss()
                                 }
@@ -795,6 +834,25 @@ private struct ProfilePetEditorSheet: View {
         Self.composeMeasurement(value: weightValue, unit: weightUnit)
     }
 
+    private var countries: [String] {
+        hometownTree.keys.sorted()
+    }
+
+    private func regions(for country: String) -> [String] {
+        hometownTree[country]?.keys.sorted() ?? []
+    }
+
+    private func cities(for country: String, region: String) -> [String] {
+        hometownTree[country]?[region] ?? []
+    }
+
+    private var composedLocation: String {
+        [selectedCountry, selectedRegion, selectedCity]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
     private static func splitMeasurement(_ raw: String?, fallbackUnit: String) -> (value: String, unit: String) {
         guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return ("", fallbackUnit)
@@ -811,6 +869,19 @@ private struct ProfilePetEditorSheet: View {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedValue.isEmpty else { return "" }
         return "\(trimmedValue) \(unit)"
+    }
+
+    private static func splitLocation(_ raw: String?) -> (country: String, region: String, city: String) {
+        let defaults = (country: "United States", region: "Washington", city: "Seattle")
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return defaults
+        }
+
+        let parts = raw.components(separatedBy: "·").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if parts.count == 3 {
+            return (parts[0], parts[1], parts[2])
+        }
+        return defaults
     }
 
     private func iconName(for species: String) -> String {
