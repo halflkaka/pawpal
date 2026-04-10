@@ -574,10 +574,16 @@ private struct ProfilePetEditorSheet: View {
     @State private var species: String
     @State private var breed: String
     @State private var sex: String
-    @State private var age: String
-    @State private var weight: String
+    @State private var ageValue: String
+    @State private var ageUnit: String
+    @State private var weightValue: String
+    @State private var weightUnit: String
     @State private var homeCity: String
     @State private var bio: String
+
+    private let ageUnits = ["years", "months"]
+    private let weightUnits = ["lb", "kg"]
+    private let hometownOptions = ["Seattle", "Bellevue", "Lynnwood", "Redmond", "Kirkland", "Everett"]
 
     let title: String
     let isSaving: Bool
@@ -593,9 +599,13 @@ private struct ProfilePetEditorSheet: View {
         _species = State(initialValue: pet?.species?.isEmpty == false ? pet?.species ?? "Dog" : "Dog")
         _breed = State(initialValue: pet?.breed ?? "")
         _sex = State(initialValue: pet?.sex ?? "")
-        _age = State(initialValue: pet?.age ?? "")
-        _weight = State(initialValue: pet?.weight ?? "")
-        _homeCity = State(initialValue: pet?.home_city ?? "")
+        let parsedAge = Self.splitMeasurement(pet?.age, fallbackUnit: "years")
+        _ageValue = State(initialValue: parsedAge.value)
+        _ageUnit = State(initialValue: parsedAge.unit)
+        let parsedWeight = Self.splitMeasurement(pet?.weight, fallbackUnit: "lb")
+        _weightValue = State(initialValue: parsedWeight.value)
+        _weightUnit = State(initialValue: parsedWeight.unit)
+        _homeCity = State(initialValue: pet?.home_city?.isEmpty == false ? pet?.home_city ?? "Seattle" : "Seattle")
         _bio = State(initialValue: pet?.bio ?? "")
     }
 
@@ -650,16 +660,40 @@ private struct ProfilePetEditorSheet: View {
                             }
                             Divider().padding(.leading, 16)
                             inputRow(title: "Age") {
-                                TextField("Optional", text: $age)
+                                HStack(spacing: 10) {
+                                    TextField("Optional", text: $ageValue)
+                                        .keyboardType(.decimalPad)
+                                        .multilineTextAlignment(.trailing)
+                                    Picker("Age Unit", selection: $ageUnit) {
+                                        ForEach(ageUnits, id: \.self) { unit in
+                                            Text(unit).tag(unit)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                }
                             }
                             Divider().padding(.leading, 16)
                             inputRow(title: "Weight") {
-                                TextField("Optional", text: $weight)
+                                HStack(spacing: 10) {
+                                    TextField("Optional", text: $weightValue)
+                                        .keyboardType(.decimalPad)
+                                        .multilineTextAlignment(.trailing)
+                                    Picker("Weight Unit", selection: $weightUnit) {
+                                        ForEach(weightUnits, id: \.self) { unit in
+                                            Text(unit).tag(unit)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                }
                             }
                             Divider().padding(.leading, 16)
-                            inputRow(title: "Home City") {
-                                TextField("Optional", text: $homeCity)
-                                    .textInputAutocapitalization(.words)
+                            inputRow(title: "Hometown") {
+                                Picker("Hometown", selection: $homeCity) {
+                                    ForEach(hometownOptions, id: \.self) { city in
+                                        Text(city).tag(city)
+                                    }
+                                }
+                                .pickerStyle(.menu)
                             }
                         }
                         .background(Color(.systemBackground))
@@ -696,7 +730,7 @@ private struct ProfilePetEditorSheet: View {
 
                         Button {
                             Task {
-                                let didSave = await onSave(name, species, breed, sex, age, weight, homeCity, bio)
+                                let didSave = await onSave(name, species, breed, sex, composedAge, composedWeight, homeCity, bio)
                                 if didSave {
                                     dismiss()
                                 }
@@ -739,7 +773,7 @@ private struct ProfilePetEditorSheet: View {
     }
 
     private func inputRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 16) {
+        HStack(alignment: .center, spacing: 16) {
             Text(title)
                 .font(.system(size: 16))
                 .foregroundStyle(.secondary)
@@ -747,9 +781,36 @@ private struct ProfilePetEditorSheet: View {
 
             content()
                 .font(.system(size: 16))
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 16)
+    }
+
+    private var composedAge: String {
+        Self.composeMeasurement(value: ageValue, unit: ageUnit)
+    }
+
+    private var composedWeight: String {
+        Self.composeMeasurement(value: weightValue, unit: weightUnit)
+    }
+
+    private static func splitMeasurement(_ raw: String?, fallbackUnit: String) -> (value: String, unit: String) {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return ("", fallbackUnit)
+        }
+
+        let parts = raw.split(separator: " ", maxSplits: 1).map(String.init)
+        if parts.count == 2 {
+            return (parts[0], parts[1])
+        }
+        return (raw, fallbackUnit)
+    }
+
+    private static func composeMeasurement(value: String, unit: String) -> String {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty else { return "" }
+        return "\(trimmedValue) \(unit)"
     }
 
     private func iconName(for species: String) -> String {
