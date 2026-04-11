@@ -29,7 +29,7 @@ struct ChatListView: View {
 
     private var header: some View {
         HStack {
-            Text("Chats")
+            Text("聊天")
                 .font(.system(size: 26, weight: .bold, design: .rounded))
                 .foregroundStyle(PawPalTheme.primaryText)
 
@@ -58,7 +58,7 @@ struct ChatListView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
-            TextField("Search", text: $searchText)
+            TextField("搜索", text: $searchText)
                 .font(.system(size: 14))
         }
         .padding(.horizontal, 12)
@@ -156,9 +156,9 @@ private struct ChatPreview: Identifiable {
 }
 
 private let sampleChats: [ChatPreview] = [
-    .init(emoji: "🐕", name: "Biscuit's Dad",  preview: "Playdate tomorrow?? 🐾",         time: "now", unreadCount: 3,  online: true),
-    .init(emoji: "🐱", name: "Luna Fan Club",   preview: "She's so fluffy omg 😭",          time: "2m",  unreadCount: 12, online: false),
-    .init(emoji: "🏥", name: "Dr. Park",        preview: "Mochi's checkup is next Tuesday", time: "1h",  unreadCount: 0,  online: true),
-    .init(emoji: "🐇", name: "Noodle",          preview: "Binkied 4 times today lol",       time: "3h",  unreadCount: 1,  online: false),
-    .init(emoji: "🐩", name: "Poodle Gang NYC", preview: "Anyone free Saturday morning?",   time: "5h",  unreadCount: 0,  online: false),
+    .init(emoji: "🐕", name: "Biscuit的爸爸",  preview: "明天一起玩嘛？🐾",         time: "刚刚", unreadCount: 3,  online: true),
+    .init(emoji: "🐱", name: "Luna后援会",   preview: "它也太蓬松了吧 😭",          time: "2分",  unreadCount: 12, online: false),
+    .init(emoji: "🏥", name: "Park医生",        preview: "Mochi下周二要体检", time: "1小时",  unreadCount: 0,  online: true),
+    .init(emoji: "🐇", name: "Noodle",          preview: "今天蹦跶了4次哈哈",       time: "3小时",  unreadCount: 1,  online: false),
+    .init(emoji: "🐩", name: "纽约贵宾群", preview: "周六早上有人有空吗？",   time: "5小时",  unreadCount: 0,  online: false),
 ]

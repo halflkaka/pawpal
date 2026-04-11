@@ -40,7 +40,7 @@ struct FeedView: View {
                 Text("🐾 PawPal")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.primaryText)
-                Text("Moments from your favorite chaos gremlins")
+                Text("看看你最爱的毛孩子日常动态")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.tertiaryText)
             }
@@ -76,10 +76,10 @@ struct FeedView: View {
         VStack(spacing: 16) {
             Text("🐾")
                 .font(.system(size: 52))
-            Text("No posts yet")
+            Text("还没有动态")
                 .font(.system(size: 20, weight: .bold, design: .rounded))
                 .foregroundStyle(PawPalTheme.primaryText)
-            Text("Be the first! Create a post from the + tab.")
+            Text("做第一个发帖的人吧，去下方发布页分享一下。")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -170,7 +170,7 @@ struct PostCard: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(post.pet?.name ?? "Unknown pet")
+                    Text(post.pet?.name ?? "未知宠物")
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundStyle(PawPalTheme.primaryText)
 
@@ -288,9 +288,9 @@ struct PostCard: View {
 
     private var reactionRow: some View {
         HStack(spacing: 10) {
-            reactionButton(icon: "heart", label: "Like")
-            reactionButton(icon: "message", label: "Comment")
-            reactionButton(icon: "pawprint.fill", label: "Boop")
+            reactionButton(icon: "heart", label: "喜欢")
+            reactionButton(icon: "message", label: "评论")
+            reactionButton(icon: "pawprint.fill", label: "贴贴")
             Spacer()
             reactionButton(icon: "paperplane", label: "")
         }
@@ -326,10 +326,10 @@ struct PostCard: View {
 
     private func relativeTime(from date: Date) -> String {
         let seconds = Int(-date.timeIntervalSinceNow)
-        if seconds < 60      { return "just now" }
-        if seconds < 3600    { return "\(seconds / 60)m ago" }
-        if seconds < 86400   { return "\(seconds / 3600)h ago" }
-        if seconds < 604800  { return "\(seconds / 86400)d ago" }
+        if seconds < 60      { return "刚刚" }
+        if seconds < 3600    { return "\(seconds / 60)分钟前" }
+        if seconds < 86400   { return "\(seconds / 3600)小时前" }
+        if seconds < 604800  { return "\(seconds / 86400)天前" }
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .none

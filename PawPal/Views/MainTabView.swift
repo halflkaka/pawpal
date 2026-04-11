@@ -14,32 +14,32 @@ struct MainTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            Tab("Feed", systemImage: "house.fill", value: .feed) {
+            Tab("首页", systemImage: "house.fill", value: .feed) {
                 NavigationStack {
                     FeedView(authManager: authManager)
                 }
             }
 
-            Tab("Discover", systemImage: "safari.fill", value: .discover) {
+            Tab("发现", systemImage: "safari.fill", value: .discover) {
                 NavigationStack {
                     ContactsView()
                 }
             }
 
-            Tab("Post", systemImage: "plus.app.fill", value: .create) {
+            Tab("发布", systemImage: "plus.app.fill", value: .create) {
                 NavigationStack {
                     CreatePostView(authManager: authManager)
                 }
             }
 
-            Tab("Chats", systemImage: "message.fill", value: .chats) {
+            Tab("聊天", systemImage: "message.fill", value: .chats) {
                 NavigationStack {
                     ChatListView()
                 }
             }
             .badge(2)
 
-            Tab("Me", systemImage: "person.crop.circle.fill", value: .me) {
+            Tab("我的", systemImage: "person.crop.circle.fill", value: .me) {
                 NavigationStack {
                     if let user = authManager.currentUser {
                         ProfileView(user: user, authManager: authManager)

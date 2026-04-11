@@ -1,9 +1,9 @@
 import SwiftUI
 
 struct ContactsView: View {
-    @State private var selectedFilter = "All"
+    @State private var selectedFilter = "全部"
 
-    private let filters = ["All", "Dogs", "Cats", "Rabbits", "Birds"]
+    private let filters = ["全部", "狗狗", "猫咪", "兔兔", "鸟类"]
 
     var body: some View {
         ScrollView {
@@ -27,10 +27,10 @@ struct ContactsView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Explore 🔭")
+            Text("发现 🔭")
                 .font(.system(size: 30, weight: .bold, design: .rounded))
                 .foregroundStyle(PawPalTheme.primaryText)
-            Text("Find pets, places, and tiny internet celebrities")
+            Text("发现宠物、地点和超有人气的小明星")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.secondary)
         }
@@ -39,7 +39,7 @@ struct ContactsView: View {
     private var searchBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-            Text("Search pets, tags, places…")
+            Text("搜索宠物、话题、地点…")
             Spacer()
         }
         .font(.system(size: 14, weight: .semibold))
@@ -73,7 +73,7 @@ struct ContactsView: View {
 
     private var spotsGrid: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PawPalSectionTitle(title: "Trending Spots", emoji: "✨")
+            PawPalSectionTitle(title: "热门地点", emoji: "✨")
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 ForEach(exploreCards) { card in
@@ -104,7 +104,7 @@ struct ContactsView: View {
 
     private var trendsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PawPalSectionTitle(title: "Trending Tags", emoji: "🔥")
+            PawPalSectionTitle(title: "热门话题", emoji: "🔥")
 
             ForEach(Array(trending.enumerated()), id: \.element.id) { index, trend in
                 HStack(spacing: 12) {
@@ -149,15 +149,15 @@ private struct TrendItem: Identifiable {
 }
 
 private let exploreCards: [ExploreCard] = [
-    .init(emoji: "🐕", background: LinearGradient(colors: [Color(red: 1.0, green: 0.88, blue: 0.70), Color(red: 1.0, green: 0.80, blue: 0.50)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "Golden Hour", meta: "Goldens · 4.2K posts"),
-    .init(emoji: "🐈", background: LinearGradient(colors: [Color(red: 0.72, green: 0.87, blue: 0.94), Color(red: 0.83, green: 0.72, blue: 0.94)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "Cat Naps", meta: "Cats · 8.1K posts"),
-    .init(emoji: "🐇", background: LinearGradient(colors: [Color(red: 0.83, green: 0.94, blue: 0.72), Color(red: 0.72, green: 0.94, blue: 0.83)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "Bunny Binkies", meta: "Rabbits · 2.3K posts"),
-    .init(emoji: "🦜", background: LinearGradient(colors: [Color(red: 0.94, green: 0.83, blue: 0.72), Color(red: 0.94, green: 0.72, blue: 0.72)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "Polly Talks", meta: "Birds · 1.8K posts")
+    .init(emoji: "🐕", background: LinearGradient(colors: [Color(red: 1.0, green: 0.88, blue: 0.70), Color(red: 1.0, green: 0.80, blue: 0.50)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "金色时刻", meta: "金毛 · 4.2K 帖子"),
+    .init(emoji: "🐈", background: LinearGradient(colors: [Color(red: 0.72, green: 0.87, blue: 0.94), Color(red: 0.83, green: 0.72, blue: 0.94)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "猫猫午睡", meta: "猫咪 · 8.1K 帖子"),
+    .init(emoji: "🐇", background: LinearGradient(colors: [Color(red: 0.83, green: 0.94, blue: 0.72), Color(red: 0.72, green: 0.94, blue: 0.83)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "兔兔蹦跳", meta: "兔兔 · 2.3K 帖子"),
+    .init(emoji: "🦜", background: LinearGradient(colors: [Color(red: 0.94, green: 0.83, blue: 0.72), Color(red: 0.94, green: 0.72, blue: 0.72)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "鹦鹉开麦", meta: "鸟类 · 1.8K 帖子")
 ]
 
 private let trending: [TrendItem] = [
-    .init(tag: "#ZoomiesHour", count: "12.4K posts", emoji: "🌀"),
-    .init(tag: "#WetNoseWednesday", count: "8.1K posts", emoji: "💧"),
-    .init(tag: "#NapSquad", count: "6.7K posts", emoji: "😴"),
-    .init(tag: "#SnootBoops", count: "4.2K posts", emoji: "👃")
+    .init(tag: "#疯跑时间", count: "12.4K 帖子", emoji: "🌀"),
+    .init(tag: "#湿鼻子星期三", count: "8.1K 帖子", emoji: "💧"),
+    .init(tag: "#午睡小分队", count: "6.7K 帖子", emoji: "😴"),
+    .init(tag: "#碰鼻子", count: "4.2K 帖子", emoji: "👃")
 ]

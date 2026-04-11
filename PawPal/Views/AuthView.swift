@@ -37,7 +37,7 @@ struct AuthView: View {
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(PawPalTheme.primaryText)
 
-                        Text("Where every pet is a star ✨")
+                        Text("让每一只宠物都闪闪发光 ✨")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(PawPalTheme.tertiaryText)
                     }
@@ -45,14 +45,14 @@ struct AuthView: View {
 
                     // MARK: Mode switcher
                     HStack(spacing: 0) {
-                        modeTab("Sign In", selected: !isRegisterMode) {
+                        modeTab("登录", selected: !isRegisterMode) {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 isRegisterMode = false
                                 authManager.clearError()
                                 password = ""
                             }
                         }
-                        modeTab("Register", selected: isRegisterMode) {
+                        modeTab("注册", selected: isRegisterMode) {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 isRegisterMode = true
                                 authManager.clearError()
@@ -66,11 +66,11 @@ struct AuthView: View {
 
                     // MARK: Fields
                     VStack(spacing: 0) {
-                        authField("Email", text: $email, isSecure: false, field: .email)
+                        authField("邮箱", text: $email, isSecure: false, field: .email)
                         Divider()
                             .padding(.horizontal, 16)
                         authField(
-                            isRegisterMode ? "Create password" : "Password",
+                            isRegisterMode ? "设置密码" : "密码",
                             text: $password,
                             isSecure: true,
                             field: .password
@@ -112,7 +112,7 @@ struct AuthView: View {
                             if authManager.isLoading {
                                 ProgressView().tint(.white)
                             } else {
-                                Text(isRegisterMode ? "Create Account" : "Sign In")
+                                Text(isRegisterMode ? "创建账号" : "登录")
                                     .font(.system(size: 17, weight: .bold, design: .rounded))
                                     .foregroundStyle(buttonEnabled ? .white : .secondary)
                             }

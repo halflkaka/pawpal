@@ -45,7 +45,7 @@ struct ProfileView: View {
         .refreshable { await loadAll() }
         .sheet(isPresented: $showingAddPet, onDismiss: { statusMessage = nil }) {
             ProfilePetEditorSheet(
-                title: "Add Pet",
+                title: "添加宠物",
                 pet: nil,
                 isSaving: isSavingPet,
                 errorMessage: petsService.errorMessage
@@ -62,7 +62,7 @@ struct ProfileView: View {
                     if activePetID.isEmpty {
                         activePetID = petsService.pets.first?.id.uuidString ?? ""
                     }
-                    statusMessage = "Pet added"
+                    statusMessage = "已添加宠物"
                     return true
                 }
                 return false
@@ -70,7 +70,7 @@ struct ProfileView: View {
         }
         .sheet(item: $editingPet, onDismiss: { statusMessage = nil }) { pet in
             ProfilePetEditorSheet(
-                title: "Edit Pet",
+                title: "编辑宠物",
                 pet: pet,
                 isSaving: isSavingPet,
                 errorMessage: petsService.errorMessage
@@ -84,7 +84,7 @@ struct ProfileView: View {
                 updated.home_city = homeCity; updated.bio = bio
                 await petsService.updatePet(updated, for: user.id)
                 if petsService.errorMessage == nil {
-                    statusMessage = "Pet updated"
+                    statusMessage = "已更新宠物"
                     return true
                 }
                 return false
@@ -100,20 +100,20 @@ struct ProfileView: View {
                 await saveProfile(username: username, displayName: displayName, bio: bio)
             }
         }
-        .alert("Delete Pet?", isPresented: deleteAlertBinding, presenting: pendingDeletePet) { pet in
-            Button("Delete", role: .destructive) {
+        .alert("删除宠物？", isPresented: deleteAlertBinding, presenting: pendingDeletePet) { pet in
+            Button("删除", role: .destructive) {
                 Task {
                     let wasActive = pet.id.uuidString == activePetID
                     await petsService.deletePet(pet.id, for: user.id)
                     if petsService.errorMessage == nil {
                         if wasActive { activePetID = petsService.pets.first?.id.uuidString ?? "" }
-                        statusMessage = "Pet deleted"
+                        statusMessage = "已删除宠物"
                     }
                 }
             }
-            Button("Cancel", role: .cancel) { pendingDeletePet = nil }
+            Button("取消", role: .cancel) { pendingDeletePet = nil }
         } message: { pet in
-            Text("Delete \(pet.name)? This can't be undone.")
+            Text("要删除 \(pet.name) 吗？此操作无法撤销。")
         }
     }
 
@@ -121,7 +121,7 @@ struct ProfileView: View {
 
     private var topBar: some View {
         HStack {
-            Text("Profile")
+            Text("个人主页")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(PawPalTheme.primaryText)
 
@@ -143,13 +143,13 @@ struct ProfileView: View {
 
             Menu {
                 Button { showingEditAccount = true } label: {
-                    Label("Edit Account", systemImage: "person.crop.circle")
+                    Label("编辑账号", systemImage: "person.crop.circle")
                 }
                 Divider()
                 Button(role: .destructive) {
                     authManager.signOut()
                 } label: {
-                    Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                    Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
                 }
             } label: {
                 Image(systemName: "gearshape.fill")
@@ -209,7 +209,7 @@ struct ProfileView: View {
 
             // Edit Profile button
             Button { showingEditAccount = true } label: {
-                Text("Edit Profile")
+                Text("编辑资料")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.primaryText)
                     .padding(.horizontal, 28)
@@ -221,13 +221,13 @@ struct ProfileView: View {
 
             // Stats row
             HStack(spacing: 0) {
-                statCell(value: "0", label: "Posts")
+                statCell(value: "0", label: "帖子")
                 statDivider()
-                statCell(value: "\(petsService.pets.count)", label: "Pets")
+                statCell(value: "\(petsService.pets.count)", label: "宠物")
                 statDivider()
-                statCell(value: "0", label: "Followers")
+                statCell(value: "0", label: "粉丝")
                 statDivider()
-                statCell(value: "0", label: "Following")
+                statCell(value: "0", label: "关注")
             }
             .padding(.vertical, 12)
             .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -260,7 +260,7 @@ struct ProfileView: View {
     private var petsBand: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("My Pets")
+                Text("我的宠物")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.primaryText)
 
@@ -270,7 +270,7 @@ struct ProfileView: View {
                     HStack(spacing: 5) {
                         Image(systemName: "plus")
                             .font(.system(size: 12, weight: .bold))
-                        Text("Add")
+                        Text("添加")
                             .font(.system(size: 13, weight: .bold, design: .rounded))
                     }
                     .foregroundStyle(PawPalTheme.orange)
@@ -285,7 +285,7 @@ struct ProfileView: View {
             if petsService.isLoading && petsService.pets.isEmpty {
                 HStack { ProgressView().padding(.horizontal, 20) }
             } else if petsService.pets.isEmpty {
-                Text("No pets yet — add your first! 🐾")
+                Text("还没有宠物，先添加第一只吧！🐾")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -359,13 +359,13 @@ struct ProfileView: View {
             Button {
                 withAnimation { activePetID = pet.id.uuidString }
             } label: {
-                Label("Set Active", systemImage: "star.fill")
+                Label("设为当前宠物", systemImage: "star.fill")
             }
             Button { editingPet = pet } label: {
-                Label("Edit Pet", systemImage: "pencil")
+                Label("编辑宠物", systemImage: "pencil")
             }
             Divider()
-            Button("Delete", role: .destructive) {
+            Button("删除", role: .destructive) {
                 pendingDeletePet = pet
             }
         }
@@ -379,7 +379,7 @@ struct ProfileView: View {
                 Image(systemName: "square.grid.3x3.fill")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(PawPalTheme.orange)
-                Text("Posts")
+                Text("帖子")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.primaryText)
                 Spacer()
@@ -393,10 +393,10 @@ struct ProfileView: View {
             VStack(spacing: 14) {
                 Text("🐾")
                     .font(.system(size: 48))
-                Text("No posts yet")
+                Text("还没有帖子")
                     .font(.system(size: 18, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.primaryText)
-                Text("Share a moment from the Post tab\nand it'll appear here.")
+                Text("去发布页分享一个瞬间，\n这里就会显示出来。")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -437,7 +437,7 @@ struct ProfileView: View {
             profile = try await profileService.saveProfile(
                 for: user.id, username: username, displayName: displayName, bio: bio
             )
-            statusMessage = "Account updated"
+            statusMessage = "账号已更新"
             return true
         } catch {
             profileErrorMessage = error.localizedDescription
@@ -558,7 +558,7 @@ private struct ProfilePetEditorSheet: View {
 
                         // MARK: Species chips
                         VStack(alignment: .leading, spacing: 10) {
-                            sectionLabel("Species")
+                            sectionLabel("宠物类别")
                             ScrollView(.horizontal) {
                                 HStack(spacing: 10) {
                                     ForEach(speciesOptions, id: \.label) { option in
@@ -573,14 +573,14 @@ private struct ProfilePetEditorSheet: View {
 
                         // MARK: Basics — name + breed
                         VStack(alignment: .leading, spacing: 10) {
-                            sectionLabel("The Basics")
+                            sectionLabel("基础信息")
                             VStack(spacing: 0) {
-                                fieldRow(label: "Name", required: true) {
-                                    TextField("Your pet's name", text: $name)
+                                fieldRow(label: "名字", required: true) {
+                                    TextField("宠物名字", text: $name)
                                 }
                                 Divider().padding(.leading, 16)
-                                fieldRow(label: "Breed") {
-                                    TextField("e.g. Golden Retriever", text: $breed)
+                                fieldRow(label: "品种") {
+                                    TextField("例如：金毛", text: $breed)
                                         .multilineTextAlignment(.trailing)
                                 }
                             }
@@ -590,11 +590,11 @@ private struct ProfilePetEditorSheet: View {
 
                         // MARK: Details — sex, age, weight, hometown
                         VStack(alignment: .leading, spacing: 10) {
-                            sectionLabel("Details")
+                            sectionLabel("详细信息")
                             VStack(spacing: 0) {
                                 // Sex pills
                                 HStack {
-                                    Text("Sex")
+                                    Text("性别")
                                         .font(.system(size: 15))
                                         .foregroundStyle(.secondary)
                                     Spacer()
@@ -605,9 +605,9 @@ private struct ProfilePetEditorSheet: View {
 
                                 Divider().padding(.leading, 16)
 
-                                fieldRow(label: "Age") {
+                                fieldRow(label: "年龄") {
                                     HStack(spacing: 8) {
-                                        TextField("e.g. 3", text: $ageValue)
+                                        TextField("例如：3", text: $ageValue)
                                             .keyboardType(.decimalPad)
                                             .multilineTextAlignment(.trailing)
                                             .frame(width: 60)
@@ -621,9 +621,9 @@ private struct ProfilePetEditorSheet: View {
 
                                 Divider().padding(.leading, 16)
 
-                                fieldRow(label: "Weight") {
+                                fieldRow(label: "体重") {
                                     HStack(spacing: 8) {
-                                        TextField("e.g. 25", text: $weightValue)
+                                        TextField("例如：25", text: $weightValue)
                                             .keyboardType(.decimalPad)
                                             .multilineTextAlignment(.trailing)
                                             .frame(width: 60)
@@ -637,8 +637,8 @@ private struct ProfilePetEditorSheet: View {
 
                                 Divider().padding(.leading, 16)
 
-                                fieldRow(label: "Hometown") {
-                                    TextField("e.g. Seattle, WA", text: $homeCity)
+                                fieldRow(label: "家乡") {
+                                    TextField("例如：西雅图", text: $homeCity)
                                         .multilineTextAlignment(.trailing)
                                 }
                             }
@@ -648,8 +648,8 @@ private struct ProfilePetEditorSheet: View {
 
                         // MARK: Bio
                         VStack(alignment: .leading, spacing: 10) {
-                            sectionLabel("Bio")
-                            TextField("A little about your pet…", text: $bio, axis: .vertical)
+                            sectionLabel("简介")
+                            TextField("简单介绍一下你的宠物…", text: $bio, axis: .vertical)
                                 .lineLimit(3...6)
                                 .font(.system(size: 16))
                                 .padding(16)
@@ -692,7 +692,7 @@ private struct ProfilePetEditorSheet: View {
                                 if isSaving {
                                     ProgressView().tint(.white)
                                 } else {
-                                    Text("Save")
+                                    Text("保存")
                                         .font(.system(size: 17, weight: .bold, design: .rounded))
                                         .foregroundStyle(canSave ? .white : .secondary)
                                 }
@@ -708,7 +708,7 @@ private struct ProfilePetEditorSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("取消") { dismiss() }
                 }
             }
         }
@@ -726,7 +726,7 @@ private struct ProfilePetEditorSheet: View {
             VStack(spacing: 6) {
                 Text(option.emoji)
                     .font(.system(size: 26))
-                Text(option.label)
+                Text(speciesDisplayName(option.label))
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(selected ? .white : PawPalTheme.secondaryText)
             }
@@ -749,7 +749,7 @@ private struct ProfilePetEditorSheet: View {
 
     private var sexSelector: some View {
         HStack(spacing: 6) {
-            ForEach([("—", ""), ("Male", "Male"), ("Female", "Female")], id: \.1) { label, value in
+            ForEach([("未设置", ""), ("公", "Male"), ("母", "Female")], id: \.1) { label, value in
                 let selected = sex == value
                 Button {
                     sex = value
@@ -824,6 +824,17 @@ private struct ProfilePetEditorSheet: View {
         let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return v.isEmpty ? "" : "\(v) \(unit)"
     }
+
+    private func speciesDisplayName(_ english: String) -> String {
+        switch english {
+        case "Dog": return "狗狗"
+        case "Cat": return "猫咪"
+        case "Rabbit": return "兔兔"
+        case "Bird": return "鸟类"
+        case "Hamster": return "仓鼠"
+        default: return "其他"
+        }
+    }
 }
 
 // MARK: - Account Editor Sheet
@@ -864,7 +875,7 @@ private struct ProfileAccountEditorSheet: View {
                                     .font(.system(size: 30))
                                     .foregroundStyle(PawPalTheme.orange)
                             }
-                            Text("Edit Account")
+                            Text("编辑账号")
                                 .font(.system(size: 22, weight: .bold, design: .rounded))
                                 .foregroundStyle(PawPalTheme.primaryText)
                         }
@@ -872,14 +883,14 @@ private struct ProfileAccountEditorSheet: View {
 
                         // Fields
                         VStack(spacing: 0) {
-                            accountRow("Username") {
-                                TextField("Required", text: $username)
+                            accountRow("用户名") {
+                                TextField("必填", text: $username)
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled()
                             }
                             Divider().padding(.leading, 16)
-                            accountRow("Display") {
-                                TextField("Optional", text: $displayName)
+                            accountRow("显示名") {
+                                TextField("选填", text: $displayName)
                             }
                         }
                         .background(Color(.systemBackground))
@@ -887,10 +898,10 @@ private struct ProfileAccountEditorSheet: View {
 
                         // Bio
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Bio")
+                            Text("简介")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(.secondary)
-                            TextField("A few words about you…", text: $bio, axis: .vertical)
+                            TextField("简单介绍一下你自己…", text: $bio, axis: .vertical)
                                 .lineLimit(4...8)
                                 .font(.system(size: 16))
                         }
@@ -929,7 +940,7 @@ private struct ProfileAccountEditorSheet: View {
                                 if isSaving {
                                     ProgressView().tint(.white)
                                 } else {
-                                    Text("Save")
+                                    Text("保存")
                                         .font(.system(size: 17, weight: .bold, design: .rounded))
                                         .foregroundStyle(canSave ? .white : .secondary)
                                 }
@@ -941,11 +952,11 @@ private struct ProfileAccountEditorSheet: View {
                     .padding(.bottom, 24)
                 }
             }
-            .navigationTitle("Edit Account")
+            .navigationTitle("编辑账号")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("取消") { dismiss() }
                 }
             }
         }

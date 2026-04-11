@@ -94,10 +94,10 @@ struct CreatePostView: View {
     private var customHeader: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("New Post")
+                Text("发布动态")
                     .font(.system(size: 26, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.primaryText)
-                Text("Every post must feature one of your pets 🐾")
+                Text("每条动态都需要关联一只你的宠物 🐾")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(PawPalTheme.tertiaryText)
             }
@@ -111,10 +111,10 @@ struct CreatePostView: View {
         VStack(spacing: 16) {
             Text("🐾")
                 .font(.system(size: 52))
-            Text("Add a pet first")
+            Text("请先添加宠物")
                 .font(.system(size: 20, weight: .bold, design: .rounded))
                 .foregroundStyle(PawPalTheme.primaryText)
-            Text("Every post needs a pet. Head to your profile to add one.")
+            Text("每条动态都需要宠物，先去个人主页添加一只吧。")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -128,10 +128,10 @@ struct CreatePostView: View {
     private var petSelectorSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Text("Posting as")
+                Text("发布身份")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.secondaryText)
-                Text("required")
+                Text("必选")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundStyle(PawPalTheme.orange)
                     .padding(.horizontal, 7)
@@ -172,7 +172,7 @@ struct CreatePostView: View {
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(isSelected ? .white : PawPalTheme.primaryText)
                     if let species = pet.species, !species.isEmpty {
-                        Text(species)
+                        Text(speciesDisplayName(species))
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(isSelected ? .white.opacity(0.8) : PawPalTheme.tertiaryText)
                     }
@@ -198,9 +198,9 @@ struct CreatePostView: View {
 
     private var composerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            let petName = selectedPet.map { $0.name } ?? "your pet"
+            let petName = selectedPet.map { $0.name } ?? "你的宠物"
 
-            TextField("What's \(petName) up to today?", text: $caption, axis: .vertical)
+            TextField("今天想分享一下 \(petName) 的什么瞬间？", text: $caption, axis: .vertical)
                 .lineLimit(6...14)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(PawPalTheme.primaryText)
@@ -212,7 +212,7 @@ struct CreatePostView: View {
                 Image(systemName: "face.smiling")
                     .foregroundStyle(PawPalTheme.orangeSoft)
                     .font(.system(size: 14))
-                TextField("Add a mood tag (e.g. Zoomies, Nap Mode…)", text: $mood)
+                TextField("加一个心情标签（例如：疯跑、午睡中…）", text: $mood)
                     .font(.system(size: 13))
                     .foregroundStyle(PawPalTheme.secondaryText)
             }
@@ -264,7 +264,7 @@ struct CreatePostView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "photo.on.rectangle")
                         .font(.system(size: 14, weight: .semibold))
-                    Text("Photos")
+                    Text("照片")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                 }
                 .foregroundStyle(PawPalTheme.secondaryText)
@@ -286,20 +286,20 @@ struct CreatePostView: View {
                 if postsService.isPosting {
                     HStack(spacing: 8) {
                         ProgressView().scaleEffect(0.8)
-                        Text("Posting…")
+                        Text("发布中…")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(PawPalTheme.secondaryText)
                     }
                 } else if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("Add a caption to post")
+                    Text("先写点内容才能发布")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(PawPalTheme.tertiaryText)
                 } else if selectedPetID == nil {
-                    Text("Select a pet to post")
+                    Text("请选择一只宠物再发布")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(PawPalTheme.tertiaryText)
                 } else {
-                    Text("Ready to share!")
+                    Text("可以发布啦！")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(PawPalTheme.orange)
                 }
@@ -310,7 +310,7 @@ struct CreatePostView: View {
                     Task { await savePost() }
                 } label: {
                     HStack(spacing: 8) {
-                        Text(didPost ? "Posted! 🎉" : "Post")
+                        Text(didPost ? "已发布！🎉" : "发布")
                             .font(.system(size: 15, weight: .bold, design: .rounded))
                         if !didPost && !postsService.isPosting {
                             Image(systemName: "arrow.up.circle.fill")
@@ -359,6 +359,18 @@ struct CreatePostView: View {
             }
         }
         selectedImageData = loaded
+    }
+
+    private func speciesDisplayName(_ english: String) -> String {
+        switch english.lowercased() {
+        case "dog": return "狗狗"
+        case "cat": return "猫咪"
+        case "rabbit", "bunny": return "兔兔"
+        case "bird": return "鸟类"
+        case "fish": return "鱼类"
+        case "hamster": return "仓鼠"
+        default: return english
+        }
     }
 
     private func savePost() async {
