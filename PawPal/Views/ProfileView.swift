@@ -495,23 +495,14 @@ private struct ProfilePetEditorSheet: View {
     @State private var ageUnit: String
     @State private var weightValue: String
     @State private var weightUnit: String
-    @State private var selectedCountry: String
-    @State private var selectedRegion: String
-    @State private var selectedCity: String
-    @State private var showingLocationPicker = false
+    @State private var homeCity: String
     @State private var bio: String
 
     private let ageUnits    = ["years", "months"]
     private let weightUnits = ["lb", "kg"]
-    private let hometownTree: [String: [String: [String]]] = [
-        "United States": [
-            "Washington": ["Seattle", "Bellevue", "Lynnwood", "Redmond", "Kirkland", "Everett"],
-            "California":  ["San Francisco", "San Jose", "Los Angeles", "San Diego"]
-        ],
-        "Canada": [
-            "British Columbia": ["Vancouver", "Burnaby", "Richmond"],
-            "Ontario":          ["Toronto", "Ottawa", "Waterloo"]
-        ]
+    private let speciesOptions: [(emoji: String, label: String)] = [
+        ("🐶", "Dog"), ("🐱", "Cat"), ("🐰", "Rabbit"),
+        ("🦜", "Bird"), ("🐹", "Hamster"), ("🐾", "Other")
     ]
 
     let title: String
@@ -528,21 +519,18 @@ private struct ProfilePetEditorSheet: View {
         self.isSaving     = isSaving
         self.errorMessage = errorMessage
         self.onSave       = onSave
-        _name    = State(initialValue: pet?.name ?? "")
-        _species = State(initialValue: pet?.species?.isEmpty == false ? pet?.species ?? "Dog" : "Dog")
-        _breed   = State(initialValue: pet?.breed ?? "")
-        _sex     = State(initialValue: pet?.sex ?? "")
+        _name     = State(initialValue: pet?.name ?? "")
+        _species  = State(initialValue: pet?.species?.isEmpty == false ? pet!.species! : "Dog")
+        _breed    = State(initialValue: pet?.breed ?? "")
+        _sex      = State(initialValue: pet?.sex ?? "")
+        _homeCity = State(initialValue: pet?.home_city ?? "")
+        _bio      = State(initialValue: pet?.bio ?? "")
         let parsedAge    = Self.splitMeasurement(pet?.age,    fallbackUnit: "years")
         _ageValue    = State(initialValue: parsedAge.value)
         _ageUnit     = State(initialValue: parsedAge.unit)
         let parsedWeight = Self.splitMeasurement(pet?.weight, fallbackUnit: "lb")
         _weightValue = State(initialValue: parsedWeight.value)
         _weightUnit  = State(initialValue: parsedWeight.unit)
-        let loc = Self.splitLocation(pet?.home_city)
-        _selectedCountry = State(initialValue: loc.country)
-        _selectedRegion  = State(initialValue: loc.region)
-        _selectedCity    = State(initialValue: loc.city)
-        _bio = State(initialValue: pet?.bio ?? "")
     }
 
     var body: some View {
@@ -551,116 +539,132 @@ private struct ProfilePetEditorSheet: View {
                 Color(.systemGroupedBackground).ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 20) {
-                        // Icon header
-                        VStack(spacing: 12) {
-                            ZStack {
-                                Circle()
-                                    .fill(PawPalTheme.cardSoft)
-                                    .frame(width: 72, height: 72)
-                                Image(systemName: iconName(for: species))
-                                    .font(.system(size: 28))
-                                    .foregroundStyle(PawPalTheme.orange)
-                            }
-                            Text(title)
+                    VStack(spacing: 24) {
+
+                        // MARK: Header
+                        VStack(spacing: 10) {
+                            Text(speciesEmoji(for: species))
+                                .font(.system(size: 64))
+                                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: species)
+
+                            Text(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                 ? title
+                                 : name.trimmingCharacters(in: .whitespacesAndNewlines))
                                 .font(.system(size: 22, weight: .bold, design: .rounded))
                                 .foregroundStyle(PawPalTheme.primaryText)
+                                .animation(.easeInOut(duration: 0.15), value: name)
                         }
-                        .padding(.top, 20)
+                        .padding(.top, 24)
 
-                        // Fields card
-                        VStack(spacing: 0) {
-                            editorRow("Name") {
-                                TextField("Pet name", text: $name)
-                            }
-                            Divider().padding(.leading, 16)
-                            editorRow("Species") {
-                                Picker("Species", selection: $species) {
-                                    Text("Dog").tag("Dog")
-                                    Text("Cat").tag("Cat")
-                                    Text("Other").tag("Other")
-                                }
-                                .pickerStyle(.menu)
-                                .onChange(of: species) { _, newValue in
-                                    breed = breedOptions(for: newValue).first ?? "Mixed"
-                                }
-                            }
-                            Divider().padding(.leading, 16)
-                            editorRow("Breed") {
-                                Picker("Breed", selection: $breed) {
-                                    ForEach(breedOptions(for: species), id: \.self) { Text($0).tag($0) }
-                                }
-                                .pickerStyle(.menu)
-                            }
-                            Divider().padding(.leading, 16)
-                            editorRow("Sex") {
-                                Picker("Sex", selection: $sex) {
-                                    Text("Not set").tag("")
-                                    Text("Male").tag("Male")
-                                    Text("Female").tag("Female")
-                                }
-                                .pickerStyle(.menu)
-                            }
-                            Divider().padding(.leading, 16)
-                            editorRow("Age") {
-                                HStack(spacing: 10) {
-                                    TextField("Optional", text: $ageValue)
-                                        .keyboardType(.decimalPad)
-                                        .multilineTextAlignment(.trailing)
-                                    Picker("Unit", selection: $ageUnit) {
-                                        ForEach(ageUnits, id: \.self) { Text($0).tag($0) }
-                                    }
-                                    .pickerStyle(.menu)
-                                }
-                            }
-                            Divider().padding(.leading, 16)
-                            editorRow("Weight") {
-                                HStack(spacing: 10) {
-                                    TextField("Optional", text: $weightValue)
-                                        .keyboardType(.decimalPad)
-                                        .multilineTextAlignment(.trailing)
-                                    Picker("Unit", selection: $weightUnit) {
-                                        ForEach(weightUnits, id: \.self) { Text($0).tag($0) }
-                                    }
-                                    .pickerStyle(.menu)
-                                }
-                            }
-                            Divider().padding(.leading, 16)
-                            Button { showingLocationPicker = true } label: {
-                                editorRow("Hometown") {
-                                    HStack(spacing: 6) {
-                                        Text(locationSummary)
-                                            .foregroundStyle(.secondary)
-                                        Image(systemName: "chevron.right")
-                                            .font(.system(size: 11, weight: .medium))
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .background(Color(.systemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                        // Bio card
+                        // MARK: Species chips
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Bio")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.secondary)
+                            sectionLabel("Species")
+                            ScrollView(.horizontal) {
+                                HStack(spacing: 10) {
+                                    ForEach(speciesOptions, id: \.label) { option in
+                                        speciesChip(option)
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 4)
+                            }
+                            .scrollIndicators(.hidden)
+                        }
+
+                        // MARK: Basics — name + breed
+                        VStack(alignment: .leading, spacing: 10) {
+                            sectionLabel("The Basics")
+                            VStack(spacing: 0) {
+                                fieldRow(label: "Name", required: true) {
+                                    TextField("Your pet's name", text: $name)
+                                }
+                                Divider().padding(.leading, 16)
+                                fieldRow(label: "Breed") {
+                                    TextField("e.g. Golden Retriever", text: $breed)
+                                        .multilineTextAlignment(.trailing)
+                                }
+                            }
+                            .background(Color(.systemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+
+                        // MARK: Details — sex, age, weight, hometown
+                        VStack(alignment: .leading, spacing: 10) {
+                            sectionLabel("Details")
+                            VStack(spacing: 0) {
+                                // Sex pills
+                                HStack {
+                                    Text("Sex")
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    sexSelector
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+
+                                Divider().padding(.leading, 16)
+
+                                fieldRow(label: "Age") {
+                                    HStack(spacing: 8) {
+                                        TextField("e.g. 3", text: $ageValue)
+                                            .keyboardType(.decimalPad)
+                                            .multilineTextAlignment(.trailing)
+                                            .frame(width: 60)
+                                        Picker("", selection: $ageUnit) {
+                                            ForEach(ageUnits, id: \.self) { Text($0).tag($0) }
+                                        }
+                                        .pickerStyle(.menu)
+                                        .labelsHidden()
+                                    }
+                                }
+
+                                Divider().padding(.leading, 16)
+
+                                fieldRow(label: "Weight") {
+                                    HStack(spacing: 8) {
+                                        TextField("e.g. 25", text: $weightValue)
+                                            .keyboardType(.decimalPad)
+                                            .multilineTextAlignment(.trailing)
+                                            .frame(width: 60)
+                                        Picker("", selection: $weightUnit) {
+                                            ForEach(weightUnits, id: \.self) { Text($0).tag($0) }
+                                        }
+                                        .pickerStyle(.menu)
+                                        .labelsHidden()
+                                    }
+                                }
+
+                                Divider().padding(.leading, 16)
+
+                                fieldRow(label: "Hometown") {
+                                    TextField("e.g. Seattle, WA", text: $homeCity)
+                                        .multilineTextAlignment(.trailing)
+                                }
+                            }
+                            .background(Color(.systemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+
+                        // MARK: Bio
+                        VStack(alignment: .leading, spacing: 10) {
+                            sectionLabel("Bio")
                             TextField("A little about your pet…", text: $bio, axis: .vertical)
                                 .lineLimit(3...6)
                                 .font(.system(size: 16))
+                                .padding(16)
+                                .background(Color(.systemBackground))
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.systemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-                        // Error
+                        // MARK: Error
                         if let errorMessage {
                             HStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
-                                Text(errorMessage).font(.system(size: 13)).foregroundStyle(.secondary)
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(.red)
+                                Text(errorMessage)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(14)
@@ -668,10 +672,13 @@ private struct ProfilePetEditorSheet: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
 
-                        // Save button
+                        // MARK: Save
                         Button {
                             Task {
-                                let ok = await onSave(name, species, breed, sex, composedAge, composedWeight, composedLocation, bio)
+                                let ok = await onSave(
+                                    name, species, breed, sex,
+                                    composedAge, composedWeight, homeCity, bio
+                                )
                                 if ok { dismiss() }
                             }
                         } label: {
@@ -679,8 +686,7 @@ private struct ProfilePetEditorSheet: View {
                                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                                     .fill(canSave
                                           ? LinearGradient(colors: [PawPalTheme.orange, PawPalTheme.orangeSoft], startPoint: .leading, endPoint: .trailing)
-                                          : LinearGradient(colors: [Color(.tertiarySystemFill), Color(.tertiarySystemFill)], startPoint: .leading, endPoint: .trailing)
-                                    )
+                                          : LinearGradient(colors: [Color(.tertiarySystemFill), Color(.tertiarySystemFill)], startPoint: .leading, endPoint: .trailing))
                                     .frame(height: 52)
                                     .shadow(color: canSave ? PawPalTheme.orange.opacity(0.35) : .clear, radius: 12, y: 6)
                                 if isSaving {
@@ -695,110 +701,116 @@ private struct ProfilePetEditorSheet: View {
                         .disabled(!canSave || isSaving)
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, 32)
                 }
             }
-            .navigationTitle(title)
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .sheet(isPresented: $showingLocationPicker) {
-                NavigationStack {
-                    Form {
-                        Picker("Country", selection: $selectedCountry) {
-                            ForEach(countries, id: \.self) { Text($0).tag($0) }
-                        }
-                        .onChange(of: selectedCountry) { _, val in
-                            selectedRegion = regions(for: val).first ?? ""
-                            selectedCity   = cities(for: val, region: selectedRegion).first ?? ""
-                        }
-                        Picker("State / Province", selection: $selectedRegion) {
-                            ForEach(regions(for: selectedCountry), id: \.self) { Text($0).tag($0) }
-                        }
-                        .onChange(of: selectedRegion) { _, val in
-                            selectedCity = cities(for: selectedCountry, region: val).first ?? ""
-                        }
-                        Picker("City", selection: $selectedCity) {
-                            ForEach(cities(for: selectedCountry, region: selectedRegion), id: \.self) { Text($0).tag($0) }
-                        }
-                    }
-                    .navigationTitle("Choose Hometown")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { showingLocationPicker = false }
-                        }
-                    }
+        }
+    }
+
+    // MARK: - Subviews
+
+    private func speciesChip(_ option: (emoji: String, label: String)) -> some View {
+        let selected = species == option.label
+        return Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.65)) {
+                species = option.label
+            }
+        } label: {
+            VStack(spacing: 6) {
+                Text(option.emoji)
+                    .font(.system(size: 26))
+                Text(option.label)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(selected ? .white : PawPalTheme.secondaryText)
+            }
+            .frame(width: 68, height: 72)
+            .background(
+                selected
+                    ? AnyShapeStyle(LinearGradient(colors: [PawPalTheme.orange, PawPalTheme.orangeSoft], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    : AnyShapeStyle(Color(.systemBackground)),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .shadow(
+                color: selected ? PawPalTheme.orange.opacity(0.3) : PawPalTheme.softShadow,
+                radius: selected ? 10 : 4, y: selected ? 5 : 2
+            )
+            .scaleEffect(selected ? 1.05 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.3, dampingFraction: 0.65), value: selected)
+    }
+
+    private var sexSelector: some View {
+        HStack(spacing: 6) {
+            ForEach([("—", ""), ("Male", "Male"), ("Female", "Female")], id: \.1) { label, value in
+                let selected = sex == value
+                Button {
+                    sex = value
+                } label: {
+                    Text(label)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(selected ? .white : PawPalTheme.secondaryText)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(
+                            selected ? AnyShapeStyle(PawPalTheme.orange) : AnyShapeStyle(PawPalTheme.cardSoft),
+                            in: Capsule()
+                        )
                 }
+                .buttonStyle(.plain)
+                .animation(.easeInOut(duration: 0.15), value: selected)
             }
         }
     }
 
-    // MARK: Helpers
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
+    }
 
-    private var canSave: Bool { !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-    private func editorRow<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
-        HStack(alignment: .center, spacing: 16) {
-            Text(title)
-                .font(.system(size: 16))
-                .foregroundStyle(.secondary)
-                .frame(width: 80, alignment: .leading)
+    private func fieldRow<C: View>(label: String, required: Bool = false, @ViewBuilder content: () -> C) -> some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 4) {
+                Text(label)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                if required {
+                    Text("*")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(PawPalTheme.orange)
+                }
+            }
+            Spacer()
             content()
-                .font(.system(size: 16))
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                .font(.system(size: 15))
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 16)
+        .padding(.vertical, 14)
     }
 
-    private var composedAge:      String { Self.composeMeasurement(value: ageValue,    unit: ageUnit)    }
-    private var composedWeight:   String { Self.composeMeasurement(value: weightValue, unit: weightUnit) }
-    private var countries:        [String] { hometownTree.keys.sorted() }
+    // MARK: - Helpers
 
-    private func breedOptions(for species: String) -> [String] {
+    private var canSave: Bool { !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var composedAge:    String { Self.composeMeasurement(value: ageValue,    unit: ageUnit) }
+    private var composedWeight: String { Self.composeMeasurement(value: weightValue, unit: weightUnit) }
+
+    private func speciesEmoji(for species: String) -> String {
         switch species {
-        case "Dog": return ["Mixed", "Golden Retriever", "Labrador", "Poodle", "French Bulldog", "Corgi", "Shiba Inu"]
-        case "Cat": return ["Mixed", "British Shorthair", "Ragdoll", "Siamese", "Maine Coon", "American Shorthair"]
-        default:    return ["Mixed", "Other"]
-        }
-    }
-
-    private func regions(for country: String) -> [String] { hometownTree[country]?.keys.sorted() ?? [] }
-    private func cities(for country: String, region: String) -> [String] { hometownTree[country]?[region] ?? [] }
-
-    private var composedLocation: String {
-        [selectedCountry, selectedRegion, selectedCity]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " · ")
-    }
-
-    private var locationSummary: String {
-        let city = selectedCity.isEmpty ? "City" : selectedCity
-        return [city, abbr(selectedRegion), abbr(selectedCountry)].filter { !$0.isEmpty }.joined(separator: ", ")
-    }
-
-    private func abbr(_ value: String) -> String {
-        switch value {
-        case "United States": return "US"
-        case "Canada":        return "CA"
-        case "Washington":    return "WA"
-        case "California":    return "CA"
-        case "British Columbia": return "BC"
-        case "Ontario":       return "ON"
-        default:              return value
-        }
-    }
-
-    private func iconName(for species: String) -> String {
-        switch species.lowercased() {
-        case "cat":   return "cat.fill"
-        case "other": return "pawprint.circle.fill"
-        default:      return "dog.fill"
+        case "Dog":     return "🐶"
+        case "Cat":     return "🐱"
+        case "Rabbit":  return "🐰"
+        case "Bird":    return "🦜"
+        case "Hamster": return "🐹"
+        default:        return "🐾"
         }
     }
 
@@ -811,13 +823,6 @@ private struct ProfilePetEditorSheet: View {
     private static func composeMeasurement(value: String, unit: String) -> String {
         let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return v.isEmpty ? "" : "\(v) \(unit)"
-    }
-
-    private static func splitLocation(_ raw: String?) -> (country: String, region: String, city: String) {
-        let defaults = (country: "United States", region: "Washington", city: "Seattle")
-        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return defaults }
-        let parts = raw.components(separatedBy: "·").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        return parts.count == 3 ? (parts[0], parts[1], parts[2]) : defaults
     }
 }
 
