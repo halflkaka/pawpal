@@ -78,39 +78,44 @@ final class PostsService: ObservableObject {
         defer { isPosting = false }
 
         do {
+            // Generate the post ID client-side so we can use it for image
+            // paths without needing a select-back after the insert.
+            let postID = UUID()
+            let trimmedMood = mood.trimmingCharacters(in: .whitespacesAndNewlines)
+
             struct NewPost: Encodable {
+                let id: UUID
                 let user_id: UUID
                 let pet_id: UUID
                 let caption: String
                 let mood: String?
             }
 
-            let trimmedMood = mood.trimmingCharacters(in: .whitespacesAndNewlines)
-            let post: RemotePost = try await client
+            // Bare insert — no .select() so no FK join can break it
+            try await client
                 .from("posts")
                 .insert(NewPost(
+                    id: postID,
                     user_id: userID,
                     pet_id: petID,
                     caption: caption.trimmingCharacters(in: .whitespacesAndNewlines),
                     mood: trimmedMood.isEmpty ? nil : trimmedMood
                 ))
-                .select(Self.createSelect)   // no likes/comments join on a brand-new post
-                .single()
                 .execute()
-                .value
 
+            // Upload images (non-fatal if storage isn't configured yet)
             if !imageData.isEmpty {
                 var insertPayloads: [[String: String]] = []
                 for (index, data) in imageData.enumerated() {
                     let jpeg = compressToJPEG(data)
-                    let path = "\(userID.uuidString)/\(post.id.uuidString)/\(index).jpg"
+                    let path = "\(userID.uuidString)/\(postID.uuidString)/\(index).jpg"
                     do {
                         _ = try await client.storage
                             .from(storageBucket)
                             .upload(path, data: jpeg, options: FileOptions(contentType: "image/jpeg", upsert: true))
                         let publicURL = try client.storage.from(storageBucket).getPublicURL(path: path)
                         insertPayloads.append([
-                            "post_id": post.id.uuidString,
+                            "post_id": postID.uuidString,
                             "url": publicURL.absoluteString,
                             "position": "\(index)"
                         ])
@@ -126,7 +131,10 @@ final class PostsService: ObservableObject {
             await loadFeed()
             return true
         } catch {
-            errorMessage = "发布失败，请稍后重试。"
+            // Surface the real error so it's visible during development
+            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            print("[PostsService] createPost 失败: \(msg)")
+            errorMessage = msg
             return false
         }
     }
