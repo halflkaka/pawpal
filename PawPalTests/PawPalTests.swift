@@ -59,7 +59,7 @@ struct PawPalTests {
 
     private func makePost(images: [RemotePostImage] = []) -> RemotePost {
         RemotePost(
-            id: UUID(), user_id: UUID(), pet_id: UUID(),
+            id: UUID(), owner_user_id: UUID(), pet_id: UUID(),
             caption: "Test", mood: nil, created_at: .now,
             pets: nil, post_images: images,
             likes: [], comments: []
