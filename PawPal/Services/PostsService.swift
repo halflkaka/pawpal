@@ -13,8 +13,11 @@ final class PostsService: ObservableObject {
     private let client: SupabaseClient
     private let storageBucket = "post-images"
 
-    // Joined fields for every post query
+    // Full join used when loading the feed (includes engagement counts)
     private static let joinSelect = "*, pets(*), post_images(id, url, position), likes(user_id), comments(id)"
+    // Lean join used immediately after insert — no likes/comments yet on a new post,
+    // and the tables may not exist until the user runs the engagement SQL migration.
+    private static let createSelect = "*, pets(*), post_images(id, url, position)"
 
     init() {
         guard let url = URL(string: SupabaseConfig.urlString) else {
@@ -91,7 +94,7 @@ final class PostsService: ObservableObject {
                     caption: caption.trimmingCharacters(in: .whitespacesAndNewlines),
                     mood: trimmedMood.isEmpty ? nil : trimmedMood
                 ))
-                .select(Self.joinSelect)
+                .select(Self.createSelect)   // no likes/comments join on a brand-new post
                 .single()
                 .execute()
                 .value
