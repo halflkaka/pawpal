@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct FeedView: View {
     @Bindable var authManager: AuthManager
@@ -15,7 +16,7 @@ struct FeedView: View {
                 } else if postsService.feedPosts.isEmpty {
                     emptyFeed
                 } else {
-                    ForEach(postsService.feedPosts) { post in
+                    ForEach(postsService.feedPosts, id: \.id) { post in
                         PostCard(
                             post: post,
                             currentUserID: authManager.currentUser?.id,
@@ -171,6 +172,7 @@ struct PostCard: View {
                 Text(speciesEmoji(for: post.pet?.species ?? ""))
                     .font(.system(size: 22))
             }
+            .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.4), lineWidth: 2))
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -204,7 +206,7 @@ struct PostCard: View {
 
     private var imageSection: some View {
         let urls = post.imageURLs
-        return Group {
+        return LazyVStack(spacing: 0) {
             if urls.count == 1 { singleImage(url: urls[0]) }
             else { imageGrid(urls: urls) }
         }
@@ -216,6 +218,15 @@ struct PostCard: View {
             case .success(let img):
                 img.resizable().scaledToFill()
                     .frame(maxWidth: .infinity).frame(height: 240).clipped()
+                    .overlay(alignment: .bottom) {
+                        LinearGradient(
+                            colors: [Color.black.opacity(0.0), Color.black.opacity(0.28)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 100)
+                        .allowsHitTesting(false)
+                    }
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             case .failure:
                 imagePlaceholder(height: 240, failed: true)
@@ -225,8 +236,12 @@ struct PostCard: View {
         }
     }
 
+    private func gridColumns(for count: Int) -> [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 6), count: min(count, 3))
+    }
+
     private func imageGrid(urls: [URL]) -> some View {
-        let cols = Array(repeating: GridItem(.flexible(), spacing: 6), count: min(urls.count, 3))
+        let cols = gridColumns(for: urls.count)
         return LazyVGrid(columns: cols, spacing: 6) {
             ForEach(Array(urls.enumerated()), id: \.offset) { _, url in
                 AsyncImage(url: url) { phase in
@@ -260,6 +275,7 @@ struct PostCard: View {
         HStack(spacing: 8) {
             // Like button
             Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 Task {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
                         likeAnimating = true
@@ -286,7 +302,9 @@ struct PostCard: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(
-                    isLiked ? Color.red.opacity(0.1) : PawPalTheme.background,
+                    isLiked
+                        ? LinearGradient(colors: [Color.red.opacity(0.15), Color.red.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        : LinearGradient(colors: [PawPalTheme.background, PawPalTheme.background], startPoint: .topLeading, endPoint: .bottomTrailing),
                     in: Capsule()
                 )
                 .animation(.easeInOut(duration: 0.15), value: isLiked)
