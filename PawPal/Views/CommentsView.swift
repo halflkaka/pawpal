@@ -3,6 +3,8 @@ import SwiftUI
 struct CommentsView: View {
     let postID: UUID
     let currentUserID: UUID?
+    let currentUserDisplayName: String
+    let currentUsername: String?
     @ObservedObject var postsService: PostsService
 
     @Environment(\.dismiss) private var dismiss
@@ -10,6 +12,7 @@ struct CommentsView: View {
     @State private var isLoading = false
     @State private var newComment = ""
     @State private var isSubmitting = false
+    @State private var errorMessage: String?
     @FocusState private var inputFocused: Bool
 
     var body: some View {
@@ -57,7 +60,18 @@ struct CommentsView: View {
                     }
                 }
 
-                inputBar
+                VStack(spacing: 0) {
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.systemGroupedBackground))
+                    }
+                    inputBar
+                }
             }
             .navigationTitle("评论")
             .navigationBarTitleDisplayMode(.inline)
@@ -68,9 +82,7 @@ struct CommentsView: View {
             }
         }
         .task {
-            isLoading = true
-            comments = await postsService.loadComments(for: postID)
-            isLoading = false
+            await reloadComments()
         }
     }
 
@@ -160,7 +172,25 @@ struct CommentsView: View {
         newComment = ""
 
         if let comment = await postsService.addComment(postID: postID, userID: userID, content: trimmed) {
-            withAnimation { comments.append(comment) }
+            errorMessage = nil
+            let localComment = RemoteComment(
+                id: comment.id,
+                post_id: comment.post_id,
+                user_id: comment.user_id,
+                content: comment.content,
+                created_at: comment.created_at,
+                profiles: comment.profiles,
+                username: comment.username ?? currentUsername,
+                display_name: comment.display_name ?? currentUserDisplayName
+            )
+            await reloadComments()
+            if comments.isEmpty {
+                withAnimation { comments = [localComment] }
+            } else if let index = comments.firstIndex(where: { $0.id == localComment.id }) {
+                comments[index] = localComment
+            }
+        } else {
+            errorMessage = "评论发送失败，请重试。"
         }
 
         isSubmitting = false
@@ -174,5 +204,12 @@ struct CommentsView: View {
         if s < 3600  { return "\(s / 60)分钟前" }
         if s < 86400 { return "\(s / 3600)小时前" }
         return "\(s / 86400)天前"
+    }
+
+    private func reloadComments() async {
+        isLoading = true
+        comments = await postsService.loadComments(for: postID)
+        await postsService.refreshCommentCount(for: postID)
+        isLoading = false
     }
 }

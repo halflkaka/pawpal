@@ -444,6 +444,7 @@ struct ProfileView: View {
             profile = try await profileService.saveProfile(
                 for: user.id, username: username, displayName: displayName, bio: bio
             )
+            await authManager.refreshCurrentProfile()
             statusMessage = "账号已更新"
             return true
         } catch {

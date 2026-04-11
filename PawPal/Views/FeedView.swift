@@ -19,6 +19,7 @@ struct FeedView: View {
                         PostCard(
                             post: post,
                             currentUserID: authManager.currentUser?.id,
+                            commentCount: postsService.commentCount(for: post.id),
                             onLike: {
                                 if let uid = authManager.currentUser?.id {
                                     await postsService.toggleLike(postID: post.id, userID: uid)
@@ -44,6 +45,10 @@ struct FeedView: View {
             CommentsView(
                 postID: post.id,
                 currentUserID: authManager.currentUser?.id,
+                currentUserDisplayName: authManager.currentProfile?.display_name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    ? authManager.currentProfile!.display_name!
+                    : (authManager.currentUser?.displayName ?? authManager.currentUser?.email?.components(separatedBy: "@").first ?? "用户"),
+                currentUsername: authManager.currentProfile?.username,
                 postsService: postsService
             )
         }
@@ -128,6 +133,7 @@ struct FeedView: View {
 struct PostCard: View {
     let post: RemotePost
     let currentUserID: UUID?
+    let commentCount: Int
     let onLike: () async -> Void
     let onComment: () -> Void
 
@@ -291,8 +297,8 @@ struct PostCard: View {
             Button(action: onComment) {
                 HStack(spacing: 5) {
                     Image(systemName: "message")
-                    if post.commentCount > 0 {
-                        Text("\(post.commentCount)")
+                    if commentCount > 0 {
+                        Text("\(commentCount)")
                             .contentTransition(.numericText())
                     } else {
                         Text("评论")
