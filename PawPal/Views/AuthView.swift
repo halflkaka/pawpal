@@ -148,8 +148,8 @@ struct AuthView: View {
                 .padding(.vertical, 11)
                 .background(
                     selected
-                        ? AnyView(LinearGradient(colors: [PawPalTheme.orange, PawPalTheme.orangeSoft], startPoint: .leading, endPoint: .trailing))
-                        : AnyView(Color.clear),
+                        ? AnyShapeStyle(LinearGradient(colors: [PawPalTheme.orange, PawPalTheme.orangeSoft], startPoint: .leading, endPoint: .trailing))
+                        : AnyShapeStyle(Color.clear),
                     in: RoundedRectangle(cornerRadius: 14, style: .continuous)
                 )
                 .padding(3)
