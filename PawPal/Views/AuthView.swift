@@ -8,129 +8,180 @@ struct AuthView: View {
     @FocusState private var focusedField: Field?
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color(.systemGroupedBackground)
-                    .ignoresSafeArea()
+        ZStack {
+            PawPalBackground()
+                .ignoresSafeArea()
 
+            ScrollView {
                 VStack(spacing: 0) {
-                    Spacer(minLength: 32)
+                    Spacer(minLength: 64)
 
+                    // MARK: Brand mark
                     VStack(spacing: 14) {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(.secondarySystemBackground))
-                            .frame(width: 76, height: 76)
-                            .overlay {
-                                Image(systemName: "pawprint.fill")
-                                    .font(.system(size: 28, weight: .medium))
-                                    .foregroundStyle(.gray)
-                            }
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [PawPalTheme.orange, PawPalTheme.orangeSoft],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 90, height: 90)
+                                .shadow(color: PawPalTheme.orange.opacity(0.38), radius: 22, y: 10)
+                            Text("🐾")
+                                .font(.system(size: 42))
+                        }
 
                         Text("PawPal")
-                            .font(.system(size: 30, weight: .semibold))
-                            .tracking(-0.5)
+                            .font(.system(size: 38, weight: .bold, design: .rounded))
+                            .foregroundStyle(PawPalTheme.primaryText)
 
-                        Text(isRegisterMode ? "Set up your account" : "Sign in to continue")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
+                        Text("Where every pet is a star ✨")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(PawPalTheme.tertiaryText)
                     }
-                    .padding(.bottom, 28)
+                    .padding(.bottom, 40)
 
+                    // MARK: Mode switcher
+                    HStack(spacing: 0) {
+                        modeTab("Sign In", selected: !isRegisterMode) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isRegisterMode = false
+                                authManager.clearError()
+                                password = ""
+                            }
+                        }
+                        modeTab("Register", selected: isRegisterMode) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isRegisterMode = true
+                                authManager.clearError()
+                                password = ""
+                            }
+                        }
+                    }
+                    .background(Color.white.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 16)
+
+                    // MARK: Fields
                     VStack(spacing: 0) {
-                        inputRow(title: "Email") {
-                            TextField("name@example.com", text: $email)
-                                .textInputAutocapitalization(.never)
-                                .keyboardType(.emailAddress)
-                                .autocorrectionDisabled()
-                                .textContentType(.username)
-                                .submitLabel(.next)
-                                .focused($focusedField, equals: .email)
-                                .onSubmit {
-                                    focusedField = .password
-                                }
-                        }
-
-                        Divider().padding(.leading, 16)
-
-                        inputRow(title: "Password") {
-                            SecureField("Enter password", text: $password)
-                                .textContentType(isRegisterMode ? .newPassword : .password)
-                                .submitLabel(.go)
-                                .focused($focusedField, equals: .password)
-                                .onSubmit {
-                                    submit()
-                                }
-                        }
-                    }
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .padding(.horizontal, 16)
-
-                    if let errorMessage = authManager.errorMessage {
-                        feedbackCard(icon: "exclamationmark.circle", text: errorMessage, tint: .red)
+                        authField("Email", text: $email, isSecure: false, field: .email)
+                        Divider()
                             .padding(.horizontal, 16)
-                            .padding(.top, 10)
+                        authField(
+                            isRegisterMode ? "Create password" : "Password",
+                            text: $password,
+                            isSecure: true,
+                            field: .password
+                        )
+                    }
+                    .background(.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .shadow(color: PawPalTheme.shadow, radius: 22, y: 8)
+                    .padding(.horizontal, 24)
+
+                    // MARK: Feedback
+                    if let error = authManager.errorMessage {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundStyle(.red)
+                            Text(error)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 28)
+                        .padding(.top, 12)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
-                    if authManager.isLoading && authManager.errorMessage == nil {
-                        feedbackCard(icon: nil, text: isRegisterMode ? "Creating account" : "Signing in", tint: .secondary, showsProgress: true)
-                            .padding(.horizontal, 16)
-                            .padding(.top, 10)
-                    }
-
+                    // MARK: CTA
                     Button {
                         submit()
                     } label: {
                         ZStack {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(buttonEnabled ? Color.black : Color(.tertiarySystemFill))
-                                .frame(height: 52)
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(buttonEnabled
+                                      ? LinearGradient(colors: [PawPalTheme.orange, PawPalTheme.orangeSoft], startPoint: .leading, endPoint: .trailing)
+                                      : LinearGradient(colors: [Color(.tertiarySystemFill), Color(.tertiarySystemFill)], startPoint: .leading, endPoint: .trailing)
+                                )
+                                .frame(height: 56)
+                                .shadow(color: buttonEnabled ? PawPalTheme.orange.opacity(0.42) : .clear, radius: 18, y: 8)
 
                             if authManager.isLoading {
-                                ProgressView()
-                                    .tint(.white)
+                                ProgressView().tint(.white)
                             } else {
                                 Text(isRegisterMode ? "Create Account" : "Sign In")
-                                    .font(.system(size: 17, weight: .semibold))
-                                    .foregroundColor(buttonEnabled ? .white : .secondary)
+                                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                                    .foregroundStyle(buttonEnabled ? .white : .secondary)
                             }
                         }
                     }
                     .disabled(!buttonEnabled)
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 24)
                     .padding(.top, 20)
+                    .animation(.easeInOut(duration: 0.15), value: buttonEnabled)
 
-                    Button(isRegisterMode ? "Sign In Instead" : "Create Account Instead") {
-                        isRegisterMode.toggle()
-                        authManager.clearError()
-                        password = ""
-                        focusedField = .email
-                    }
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 18)
-                    .disabled(authManager.isLoading)
-
-                    Spacer()
+                    Spacer(minLength: 48)
                 }
             }
-            .navigationBarHidden(true)
+            .scrollIndicators(.hidden)
         }
-        .onAppear {
-            focusedField = .email
-        }
-        .onChange(of: email) { _, _ in
-            authManager.clearError()
-        }
-        .onChange(of: password) { _, _ in
-            authManager.clearError()
-        }
+        .animation(.easeInOut(duration: 0.2), value: authManager.errorMessage)
+        .onAppear { focusedField = .email }
+        .onChange(of: email) { _, _ in authManager.clearError() }
+        .onChange(of: password) { _, _ in authManager.clearError() }
         .onChange(of: authManager.currentUser?.id) { _, newValue in
-            if newValue != nil {
-                focusedField = nil
-            }
+            if newValue != nil { focusedField = nil }
         }
     }
+
+    // MARK: - Subviews
+
+    private func modeTab(_ label: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(selected ? .white : PawPalTheme.secondaryText)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(
+                    selected
+                        ? AnyView(LinearGradient(colors: [PawPalTheme.orange, PawPalTheme.orangeSoft], startPoint: .leading, endPoint: .trailing))
+                        : AnyView(Color.clear),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                )
+                .padding(3)
+        }
+        .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.2), value: selected)
+    }
+
+    private func authField(_ placeholder: String, text: Binding<String>, isSecure: Bool, field: Field) -> some View {
+        Group {
+            if isSecure {
+                SecureField(placeholder, text: text)
+                    .textContentType(isRegisterMode ? .newPassword : .password)
+            } else {
+                TextField(placeholder, text: text)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.emailAddress)
+                    .autocorrectionDisabled()
+                    .textContentType(.username)
+            }
+        }
+        .font(.system(size: 16))
+        .submitLabel(field == .email ? .next : .go)
+        .focused($focusedField, equals: field)
+        .onSubmit {
+            if field == .email { focusedField = .password } else { submit() }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+    }
+
+    // MARK: - Helpers
 
     private var normalizedEmail: String {
         email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -142,10 +193,8 @@ struct AuthView: View {
 
     private func submit() {
         guard buttonEnabled else { return }
-
         focusedField = nil
         authManager.clearError()
-
         Task {
             if isRegisterMode {
                 await authManager.register(email: normalizedEmail, password: password)
@@ -155,43 +204,5 @@ struct AuthView: View {
         }
     }
 
-    private func inputRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 16) {
-            Text(title)
-                .font(.system(size: 16))
-                .foregroundStyle(.secondary)
-                .frame(width: 78, alignment: .leading)
-
-            content()
-                .font(.system(size: 16))
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 16)
-    }
-
-    private func feedbackCard(icon: String?, text: String, tint: Color, showsProgress: Bool = false) -> some View {
-        HStack(spacing: 10) {
-            if showsProgress {
-                ProgressView()
-                    .controlSize(.small)
-            } else if let icon {
-                Image(systemName: icon)
-                    .foregroundStyle(tint)
-            }
-
-            Text(text)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
-    private enum Field {
-        case email
-        case password
-    }
+    private enum Field { case email, password }
 }
