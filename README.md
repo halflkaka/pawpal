@@ -72,6 +72,8 @@ At minimum, your Supabase project needs these app features working:
 - the related RLS policies
 - storage for post images
 
+The checked-in `supabase/` SQL now includes the current likes/comments setup and the `post_images` column alignment used by the app (`url` / `position`).
+
 If your schema is incomplete, some app surfaces may still load with fallback behavior, but posting, comments, or profile-linked features may be missing or partially degraded.
 
 ### 4. Create the storage bucket
