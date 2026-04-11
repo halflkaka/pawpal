@@ -412,26 +412,27 @@ final class PostsService: ObservableObject {
     }
 
     private func refreshCommentCounts(for postIDs: [UUID]) async {
-        for postID in postIDs {
-            do {
-                struct CommentCountRow: Codable {
-                    let id: UUID
-                    let comments: [RemoteCommentStub]
-                }
+        guard !postIDs.isEmpty else { return }
 
-                let row: CommentCountRow = try await client
-                    .from("posts")
-                    .select(Self.commentOnlySelect)
-                    .eq("id", value: postID.uuidString)
-                    .single()
-                    .execute()
-                    .value
+        struct CommentCountRow: Codable {
+            let id: UUID
+            let comments: [RemoteCommentStub]
+        }
 
-                commentCounts[postID] = row.comments.count
-                syncCommentCount(postID: postID, count: row.comments.count)
-            } catch {
-                print("[PostsService] refreshCommentCounts postID=\(postID) 失败: \(error)")
+        do {
+            let rows: [CommentCountRow] = try await client
+                .from("posts")
+                .select(Self.commentOnlySelect)
+                .in("id", value: postIDs.map(\.uuidString))
+                .execute()
+                .value
+
+            for row in rows {
+                commentCounts[row.id] = row.comments.count
+                syncCommentCount(postID: row.id, count: row.comments.count)
             }
+        } catch {
+            print("[PostsService] refreshCommentCounts 批量查询失败: \(error)")
         }
     }
 

@@ -15,7 +15,7 @@ struct FeedView: View {
                 } else if postsService.feedPosts.isEmpty {
                     emptyFeed
                 } else {
-                    ForEach(postsService.feedPosts) { post in
+                    ForEach(postsService.feedPosts, id: \.id) { post in
                         PostCard(
                             post: post,
                             currentUserID: authManager.currentUser?.id,
@@ -204,7 +204,7 @@ struct PostCard: View {
 
     private var imageSection: some View {
         let urls = post.imageURLs
-        return Group {
+        return LazyVStack(spacing: 0) {
             if urls.count == 1 { singleImage(url: urls[0]) }
             else { imageGrid(urls: urls) }
         }
@@ -225,8 +225,12 @@ struct PostCard: View {
         }
     }
 
+    private func gridColumns(for count: Int) -> [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 6), count: min(count, 3))
+    }
+
     private func imageGrid(urls: [URL]) -> some View {
-        let cols = Array(repeating: GridItem(.flexible(), spacing: 6), count: min(urls.count, 3))
+        let cols = gridColumns(for: urls.count)
         return LazyVGrid(columns: cols, spacing: 6) {
             ForEach(Array(urls.enumerated()), id: \.offset) { _, url in
                 AsyncImage(url: url) { phase in
