@@ -369,6 +369,13 @@ struct ProfileView: View {
                 pendingDeletePet = pet
             }
         }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                pendingDeletePet = pet
+            } label: {
+                Label("删除", systemImage: "trash")
+            }
+        }
     }
 
     // MARK: - Posts grid
@@ -465,7 +472,7 @@ struct ProfileView: View {
     }
 
     private var fallbackName: String {
-        user.email?.components(separatedBy: "@").first ?? "User"
+        user.email?.components(separatedBy: "@").first ?? "用户"
     }
 
     private func iconName(for species: String) -> String {
@@ -498,8 +505,8 @@ private struct ProfilePetEditorSheet: View {
     @State private var homeCity: String
     @State private var bio: String
 
-    private let ageUnits    = ["years", "months"]
-    private let weightUnits = ["lb", "kg"]
+    private let ageUnits    = ["岁", "个月"]
+    private let weightUnits = ["公斤", "斤"]
     private let speciesOptions: [(emoji: String, label: String)] = [
         ("🐶", "Dog"), ("🐱", "Cat"), ("🐰", "Rabbit"),
         ("🦜", "Bird"), ("🐹", "Hamster"), ("🐾", "Other")
@@ -525,10 +532,10 @@ private struct ProfilePetEditorSheet: View {
         _sex      = State(initialValue: pet?.sex ?? "")
         _homeCity = State(initialValue: pet?.home_city ?? "")
         _bio      = State(initialValue: pet?.bio ?? "")
-        let parsedAge    = Self.splitMeasurement(pet?.age,    fallbackUnit: "years")
+        let parsedAge    = Self.splitMeasurement(pet?.age,    fallbackUnit: "岁")
         _ageValue    = State(initialValue: parsedAge.value)
         _ageUnit     = State(initialValue: parsedAge.unit)
-        let parsedWeight = Self.splitMeasurement(pet?.weight, fallbackUnit: "lb")
+        let parsedWeight = Self.splitMeasurement(pet?.weight, fallbackUnit: "公斤")
         _weightValue = State(initialValue: parsedWeight.value)
         _weightUnit  = State(initialValue: parsedWeight.unit)
     }

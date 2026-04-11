@@ -124,8 +124,13 @@ final class PetsService: ObservableObject {
                 .from("pets")
                 .delete()
                 .eq("id", value: petID.uuidString)
+                .eq("owner_user_id", value: userID.uuidString)
                 .execute()
-            await loadPets(for: userID)
+
+            pets.removeAll { $0.id == petID }
+            if pets.contains(where: { $0.owner_user_id == userID }) {
+                await loadPets(for: userID)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
