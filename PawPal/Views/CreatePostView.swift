@@ -1,13 +1,13 @@
 import PhotosUI
 import SwiftUI
-import SwiftData
 
 struct CreatePostView: View {
-    @Environment(\.modelContext) private var modelContext
     @Bindable var authManager: AuthManager
     @AppStorage("activePetID") private var activePetID = ""
 
-    @StateObject private var petsService = PetsService()
+    @StateObject private var petsService  = PetsService()
+    @StateObject private var postsService = PostsService()
+
     @State private var selectedPetID: UUID?
     @State private var caption = ""
     @State private var mood = ""
@@ -49,6 +49,14 @@ struct CreatePostView: View {
                             mediaActionsRow
                         }
                         .padding(.horizontal, 16)
+                    }
+
+                    if let error = postsService.errorMessage {
+                        Text(error)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 8)
                     }
                 }
                 .padding(.bottom, 100)
@@ -275,7 +283,14 @@ struct CreatePostView: View {
         VStack(spacing: 0) {
             Divider().opacity(0.1)
             HStack(spacing: 16) {
-                if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if postsService.isPosting {
+                    HStack(spacing: 8) {
+                        ProgressView().scaleEffect(0.8)
+                        Text("Posting…")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(PawPalTheme.secondaryText)
+                    }
+                } else if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text("Add a caption to post")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(PawPalTheme.tertiaryText)
@@ -292,12 +307,12 @@ struct CreatePostView: View {
                 Spacer()
 
                 Button {
-                    savePost()
+                    Task { await savePost() }
                 } label: {
                     HStack(spacing: 8) {
                         Text(didPost ? "Posted! 🎉" : "Post")
                             .font(.system(size: 15, weight: .bold, design: .rounded))
-                        if !didPost {
+                        if !didPost && !postsService.isPosting {
                             Image(systemName: "arrow.up.circle.fill")
                                 .font(.system(size: 16))
                         }
@@ -306,12 +321,14 @@ struct CreatePostView: View {
                     .padding(.horizontal, 22)
                     .padding(.vertical, 12)
                     .background(
-                        canPost ? PawPalTheme.orange : PawPalTheme.tertiaryText.opacity(0.3),
+                        canPost && !postsService.isPosting
+                            ? PawPalTheme.orange
+                            : PawPalTheme.tertiaryText.opacity(0.3),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous)
                     )
                     .animation(.easeInOut(duration: 0.15), value: canPost)
                 }
-                .disabled(!canPost)
+                .disabled(!canPost || postsService.isPosting)
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
@@ -324,13 +341,13 @@ struct CreatePostView: View {
 
     private func speciesEmoji(for species: String) -> String {
         switch species.lowercased() {
-        case "dog":  return "🐶"
-        case "cat":  return "🐱"
+        case "dog":            return "🐶"
+        case "cat":            return "🐱"
         case "rabbit", "bunny": return "🐰"
-        case "bird": return "🦜"
-        case "fish": return "🐟"
-        case "hamster": return "🐹"
-        default: return "🐾"
+        case "bird":           return "🦜"
+        case "fish":           return "🐟"
+        case "hamster":        return "🐹"
+        default:               return "🐾"
         }
     }
 
@@ -344,30 +361,27 @@ struct CreatePostView: View {
         selectedImageData = loaded
     }
 
-    private func savePost() {
-        guard canPost, let pet = selectedPet else { return }
+    private func savePost() async {
+        guard canPost, let pet = selectedPet, let user = authManager.currentUser else { return }
 
-        let post = StoredPost(
+        let success = await postsService.createPost(
+            userID: user.id,
             petID: pet.id,
-            petName: pet.name,
             caption: caption,
             mood: mood,
-            imageDataListJSON: StoredPost.encodeImageDataList(selectedImageData)
+            imageData: selectedImageData
         )
 
-        modelContext.insert(post)
-        try? modelContext.save()
-
-        activePetID = pet.id.uuidString
-
-        caption = ""
-        mood = ""
-        selectedItems = []
-        selectedImageData = []
-
-        withAnimation { didPost = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation { didPost = false }
+        if success {
+            activePetID = pet.id.uuidString
+            caption = ""
+            mood = ""
+            selectedItems = []
+            selectedImageData = []
+            withAnimation { didPost = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                withAnimation { didPost = false }
+            }
         }
     }
 }

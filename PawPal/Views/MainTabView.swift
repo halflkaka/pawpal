@@ -16,7 +16,7 @@ struct MainTabView: View {
         TabView(selection: $selectedTab) {
             Tab("Feed", systemImage: "house.fill", value: .feed) {
                 NavigationStack {
-                    FeedView()
+                    FeedView(authManager: authManager)
                 }
             }
 

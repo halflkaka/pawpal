@@ -1,25 +1,21 @@
 import SwiftUI
-import SwiftData
 
 struct FeedView: View {
-    @Query(sort: \StoredPost.createdAt, order: .reverse) private var posts: [StoredPost]
-    @State private var selectedStoryID: UUID?
-
-    private let stories = PawPalStory.sample
+    @Bindable var authManager: AuthManager
+    @StateObject private var postsService = PostsService()
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 header
-                storiesRow
 
-                if posts.isEmpty {
-                    ForEach(PawPalFeedPost.sample) { post in
-                        samplePostCard(post)
-                    }
+                if postsService.isLoadingFeed && postsService.feedPosts.isEmpty {
+                    feedSkeleton
+                } else if postsService.feedPosts.isEmpty {
+                    emptyFeed
                 } else {
-                    ForEach(posts) { post in
-                        storedPostCard(post)
+                    ForEach(postsService.feedPosts) { post in
+                        PostCard(post: post)
                     }
                 }
             }
@@ -32,7 +28,11 @@ struct FeedView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
+        .refreshable { await postsService.loadFeed() }
+        .task { await postsService.loadFeed() }
     }
+
+    // MARK: - Header
 
     private var header: some View {
         HStack(spacing: 12) {
@@ -48,141 +48,8 @@ struct FeedView: View {
             Spacer()
 
             headerButton(systemImage: "magnifyingglass")
-            headerButton(systemImage: "bell.fill", badge: true)
+            headerButton(systemImage: "bell.fill", badge: false)
         }
-    }
-
-    private var storiesRow: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 12) {
-                ForEach(stories) { story in
-                    VStack(spacing: 6) {
-                        ZStack {
-                            Circle()
-                                .fill(storyRingFill(for: story))
-                                .frame(width: 62, height: 62)
-
-                            PawPalAvatar(
-                                emoji: story.emoji,
-                                size: 56,
-                                background: PawPalTheme.background,
-                                ringColor: story.isAdd ? PawPalTheme.orangeSoft : PawPalTheme.background
-                            )
-                        }
-
-                        Text(story.name)
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundStyle(PawPalTheme.secondaryText)
-                            .lineLimit(1)
-                    }
-                    .frame(width: 64)
-                    .onTapGesture {
-                        selectedStoryID = story.id
-                    }
-                }
-            }
-            .padding(.vertical, 2)
-        }
-        .scrollIndicators(.hidden)
-    }
-
-    private func samplePostCard(_ post: PawPalFeedPost) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                PawPalAvatar(emoji: post.avatarEmoji, size: 44, ringColor: PawPalTheme.orangeSoft)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(post.name)
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                            .foregroundStyle(PawPalTheme.primaryText)
-                        PawPalPill(text: post.badge, systemImage: nil, tint: PawPalTheme.green)
-                    }
-
-                    Text("\(post.owner) · \(post.time)")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Image(systemName: "ellipsis")
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(post.text)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(PawPalTheme.primaryText)
-                .lineSpacing(3)
-
-            ZStack(alignment: .bottomLeading) {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(post.background)
-                    .frame(height: 220)
-                    .overlay {
-                        Text(post.imageEmoji)
-                            .font(.system(size: 72))
-                    }
-
-                PawPalPill(text: post.location, systemImage: "mappin.and.ellipse", tint: PawPalTheme.secondaryText)
-                    .padding(12)
-            }
-
-            if !post.tags.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        ForEach(post.tags, id: \.self) { tag in
-                            PawPalPill(text: tag, systemImage: nil, tint: PawPalTheme.orange)
-                        }
-                    }
-                }
-                .scrollIndicators(.hidden)
-            }
-
-            HStack(spacing: 10) {
-                reactionButton(icon: "heart", text: "\(post.likes)")
-                reactionButton(icon: "message", text: "\(post.comments)")
-                reactionButton(icon: "pawprint.fill", text: "Boop")
-                Spacer()
-                reactionButton(icon: "paperplane", text: "")
-            }
-        }
-        .pawPalCard()
-    }
-
-    private func storedPostCard(_ post: StoredPost) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                PawPalAvatar(emoji: "🐾", size: 44, ringColor: PawPalTheme.orangeSoft)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(post.petName.isEmpty ? "Pet" : post.petName)
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(PawPalTheme.primaryText)
-                    Text(post.createdAt.formatted(date: .abbreviated, time: .shortened))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-            }
-
-            if !post.caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(post.caption)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(PawPalTheme.primaryText)
-                    .lineSpacing(3)
-            }
-
-            if !post.imageDataList.isEmpty {
-                imageGrid(post.imageDataList)
-            }
-
-            if !post.mood.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                PawPalPill(text: post.mood, systemImage: "sparkles", tint: PawPalTheme.orangeSoft)
-            }
-        }
-        .pawPalCard()
     }
 
     private func headerButton(systemImage: String, badge: Bool = false) -> some View {
@@ -203,25 +70,237 @@ struct FeedView: View {
         }
     }
 
-    private func storyRingFill(for story: PawPalStory) -> LinearGradient {
-        if story.isAdd {
-            return LinearGradient(colors: [.white, .white], startPoint: .topLeading, endPoint: .bottomTrailing)
+    // MARK: - Empty / Loading states
+
+    private var emptyFeed: some View {
+        VStack(spacing: 16) {
+            Text("🐾")
+                .font(.system(size: 52))
+            Text("No posts yet")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.primaryText)
+            Text("Be the first! Create a post from the + tab.")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
-        if story.seen {
-            return LinearGradient(colors: [Color.gray.opacity(0.22), Color.gray.opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing)
-        }
-        return LinearGradient(
-            colors: [PawPalTheme.orange, PawPalTheme.orangeSoft, PawPalTheme.yellow],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        .frame(maxWidth: .infinity)
+        .padding(.top, 60)
     }
 
-    private func reactionButton(icon: String, text: String) -> some View {
+    private var feedSkeleton: some View {
+        VStack(spacing: 18) {
+            ForEach(0..<3, id: \.self) { _ in
+                skeletonCard
+            }
+        }
+    }
+
+    private var skeletonCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(PawPalTheme.cardSoft)
+                    .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 6) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(PawPalTheme.cardSoft)
+                        .frame(width: 120, height: 14)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(PawPalTheme.cardSoft)
+                        .frame(width: 80, height: 11)
+                }
+            }
+            RoundedRectangle(cornerRadius: 4)
+                .fill(PawPalTheme.cardSoft)
+                .frame(maxWidth: .infinity)
+                .frame(height: 14)
+            RoundedRectangle(cornerRadius: 4)
+                .fill(PawPalTheme.cardSoft)
+                .frame(width: 200, height: 14)
+            RoundedRectangle(cornerRadius: 20)
+                .fill(PawPalTheme.cardSoft)
+                .frame(maxWidth: .infinity)
+                .frame(height: 200)
+        }
+        .padding(16)
+        .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .redacted(reason: .placeholder)
+    }
+}
+
+// MARK: - PostCard
+
+struct PostCard: View {
+    let post: RemotePost
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            cardHeader
+            captionText
+            if !post.imageURLs.isEmpty {
+                imageSection
+            }
+            if let mood = post.mood, !mood.isEmpty {
+                PawPalPill(text: mood, systemImage: "sparkles", tint: PawPalTheme.orangeSoft)
+            }
+            reactionRow
+        }
+        .pawPalCard()
+    }
+
+    // MARK: - Header
+
+    private var cardHeader: some View {
+        HStack(spacing: 12) {
+            // Pet avatar (emoji-based until pet photo upload is added)
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [PawPalTheme.orange.opacity(0.25), PawPalTheme.cardSoft],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 44, height: 44)
+                Text(speciesEmoji(for: post.pet?.species ?? ""))
+                    .font(.system(size: 22))
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(post.pet?.name ?? "Unknown pet")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.primaryText)
+
+                    if let species = post.pet?.species, !species.isEmpty {
+                        PawPalPill(
+                            text: species,
+                            systemImage: nil,
+                            tint: PawPalTheme.orange.opacity(0.7)
+                        )
+                    }
+                }
+
+                Text(relativeTime(from: post.created_at))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Image(systemName: "ellipsis")
+                .foregroundStyle(.secondary)
+                .font(.system(size: 14))
+        }
+    }
+
+    // MARK: - Caption
+
+    private var captionText: some View {
+        Text(post.caption)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(PawPalTheme.primaryText)
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: - Images
+
+    private var imageSection: some View {
+        let urls = post.imageURLs
+        return Group {
+            if urls.count == 1 {
+                singleImage(url: urls[0])
+            } else {
+                imageGrid(urls: urls)
+            }
+        }
+    }
+
+    private func singleImage(url: URL) -> some View {
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .empty:
+                imagePlaceholder(height: 240)
+            case .success(let image):
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 240)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            case .failure:
+                imagePlaceholder(height: 240, failed: true)
+            @unknown default:
+                imagePlaceholder(height: 240)
+            }
+        }
+    }
+
+    private func imageGrid(urls: [URL]) -> some View {
+        let cols = Array(
+            repeating: GridItem(.flexible(), spacing: 6),
+            count: min(urls.count, 3)
+        )
+        return LazyVGrid(columns: cols, spacing: 6) {
+            ForEach(Array(urls.enumerated()), id: \.offset) { _, url in
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .empty:
+                        imagePlaceholder(height: 110)
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(height: 110)
+                            .frame(maxWidth: .infinity)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    case .failure:
+                        imagePlaceholder(height: 110, failed: true)
+                    @unknown default:
+                        imagePlaceholder(height: 110)
+                    }
+                }
+            }
+        }
+    }
+
+    private func imagePlaceholder(height: CGFloat, failed: Bool = false) -> some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(PawPalTheme.cardSoft)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .overlay {
+                if failed {
+                    Image(systemName: "photo")
+                        .foregroundStyle(PawPalTheme.tertiaryText)
+                } else {
+                    ProgressView()
+                }
+            }
+    }
+
+    // MARK: - Reactions
+
+    private var reactionRow: some View {
+        HStack(spacing: 10) {
+            reactionButton(icon: "heart", label: "Like")
+            reactionButton(icon: "message", label: "Comment")
+            reactionButton(icon: "pawprint.fill", label: "Boop")
+            Spacer()
+            reactionButton(icon: "paperplane", label: "")
+        }
+    }
+
+    private func reactionButton(icon: String, label: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
-            if !text.isEmpty {
-                Text(text)
+            if !label.isEmpty {
+                Text(label)
             }
         }
         .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -231,85 +310,29 @@ struct FeedView: View {
         .background(PawPalTheme.background, in: Capsule())
     }
 
-    private func imageGrid(_ images: [Data]) -> some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: min(images.count == 1 ? 1 : 3, 3))
+    // MARK: - Helpers
 
-        return LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(Array(images.enumerated()), id: \.offset) { _, data in
-                if let uiImage = UIImage(data: data) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(height: images.count == 1 ? 220 : 100)
-                        .frame(maxWidth: .infinity)
-                        .clipShape(.rect(cornerRadius: 18))
-                }
-            }
+    private func speciesEmoji(for species: String) -> String {
+        switch species.lowercased() {
+        case "dog":             return "🐶"
+        case "cat":             return "🐱"
+        case "rabbit", "bunny": return "🐰"
+        case "bird":            return "🦜"
+        case "hamster":         return "🐹"
+        case "fish":            return "🐟"
+        default:                return "🐾"
         }
     }
-}
 
-private struct PawPalStory: Identifiable {
-    let id = UUID()
-    let name: String
-    let emoji: String
-    let seen: Bool
-    let isAdd: Bool
-
-    static let sample: [PawPalStory] = [
-        .init(name: "You", emoji: "➕", seen: false, isAdd: true),
-        .init(name: "Mochi", emoji: "🐶", seen: false, isAdd: false),
-        .init(name: "Noodle", emoji: "🐰", seen: false, isAdd: false),
-        .init(name: "Luna", emoji: "🐱", seen: true, isAdd: false),
-        .init(name: "Waffles", emoji: "🦜", seen: true, isAdd: false)
-    ]
-}
-
-private struct PawPalFeedPost: Identifiable {
-    let id: Int
-    let avatarEmoji: String
-    let name: String
-    let badge: String
-    let owner: String
-    let time: String
-    let text: String
-    let imageEmoji: String
-    let background: LinearGradient
-    let location: String
-    let tags: [String]
-    let likes: Int
-    let comments: Int
-
-    static let sample: [PawPalFeedPost] = [
-        .init(
-            id: 1,
-            avatarEmoji: "🐶",
-            name: "Mochi",
-            badge: "Shiba",
-            owner: "@sakura",
-            time: "2m",
-            text: "Finally nailed the give-paw trick. Three weeks of training paid off 🐾",
-            imageEmoji: "🐕",
-            background: LinearGradient(colors: [Color(red: 1.0, green: 0.88, blue: 0.70), Color(red: 1.0, green: 0.80, blue: 0.50)], startPoint: .topLeading, endPoint: .bottomTrailing),
-            location: "Riverside Park",
-            tags: ["#PawProgress", "#ShibaInu"],
-            likes: 284,
-            comments: 42
-        ),
-        .init(
-            id: 2,
-            avatarEmoji: "🐱",
-            name: "Luna",
-            badge: "Maine Coon",
-            owner: "@felix",
-            time: "1h",
-            text: "My kingdom. You may not enter 📦👑",
-            imageEmoji: "📦",
-            background: LinearGradient(colors: [Color(red: 0.72, green: 0.87, blue: 0.94), Color(red: 0.83, green: 0.72, blue: 0.94)], startPoint: .topLeading, endPoint: .bottomTrailing),
-            location: "Sunny window",
-            tags: ["#CatLife", "#BoxEnjoyer"],
-            likes: 531,
-            comments: 88
-        )
-    ]
+    private func relativeTime(from date: Date) -> String {
+        let seconds = Int(-date.timeIntervalSinceNow)
+        if seconds < 60      { return "just now" }
+        if seconds < 3600    { return "\(seconds / 60)m ago" }
+        if seconds < 86400   { return "\(seconds / 3600)h ago" }
+        if seconds < 604800  { return "\(seconds / 86400)d ago" }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
+    }
 }
