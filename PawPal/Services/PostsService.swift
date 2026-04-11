@@ -13,7 +13,8 @@ final class PostsService: ObservableObject {
     private let client: SupabaseClient
     private let storageBucket = "post-images"
 
-    private static let joinSelect = "*, pets(*), post_images(id, url, position)"
+    // Joined fields for every post query
+    private static let joinSelect = "*, pets(*), post_images(id, url, position), likes(user_id), comments(id)"
 
     init() {
         guard let url = URL(string: SupabaseConfig.urlString) else {
@@ -39,7 +40,7 @@ final class PostsService: ObservableObject {
                 .value
             feedPosts = posts
         } catch {
-            errorMessage = "Couldn't load the feed. Pull to refresh."
+            errorMessage = "动态加载失败，下拉可重试。"
         }
     }
 
@@ -74,7 +75,6 @@ final class PostsService: ObservableObject {
         defer { isPosting = false }
 
         do {
-            // 1. Insert the post row
             struct NewPost: Encodable {
                 let user_id: UUID
                 let pet_id: UUID
@@ -96,52 +96,34 @@ final class PostsService: ObservableObject {
                 .execute()
                 .value
 
-            // 2. Upload images to Supabase Storage and collect URLs
             if !imageData.isEmpty {
                 var insertPayloads: [[String: String]] = []
-
                 for (index, data) in imageData.enumerated() {
                     let jpeg = compressToJPEG(data)
                     let path = "\(userID.uuidString)/\(post.id.uuidString)/\(index).jpg"
-
                     do {
                         _ = try await client.storage
                             .from(storageBucket)
-                            .upload(
-                                path,
-                                data: jpeg,
-                                options: FileOptions(contentType: "image/jpeg", upsert: true)
-                            )
-
-                        let publicURL = try client.storage
-                            .from(storageBucket)
-                            .getPublicURL(path: path)
-
+                            .upload(path, data: jpeg, options: FileOptions(contentType: "image/jpeg", upsert: true))
+                        let publicURL = try client.storage.from(storageBucket).getPublicURL(path: path)
                         insertPayloads.append([
                             "post_id": post.id.uuidString,
                             "url": publicURL.absoluteString,
                             "position": "\(index)"
                         ])
                     } catch {
-                        // Non-fatal: continue with other images
-                        print("[PostsService] Image upload failed at index \(index): \(error)")
+                        print("[PostsService] 图片上传失败 index=\(index): \(error)")
                     }
                 }
-
                 if !insertPayloads.isEmpty {
-                    try await client
-                        .from("post_images")
-                        .insert(insertPayloads)
-                        .execute()
+                    try await client.from("post_images").insert(insertPayloads).execute()
                 }
             }
 
-            // 3. Reload the feed so the new post appears with images
             await loadFeed()
             return true
-
         } catch {
-            errorMessage = "Couldn't post right now. Please try again."
+            errorMessage = "发布失败，请稍后重试。"
             return false
         }
     }
@@ -156,11 +138,90 @@ final class PostsService: ObservableObject {
                 .eq("id", value: postID.uuidString)
                 .eq("user_id", value: userID.uuidString)
                 .execute()
-
             feedPosts.removeAll { $0.id == postID }
             userPosts.removeAll { $0.id == postID }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Likes (optimistic)
+
+    func toggleLike(postID: UUID, userID: UUID) async {
+        guard let index = feedPosts.firstIndex(where: { $0.id == postID }) else { return }
+        let original = feedPosts[index]
+        let alreadyLiked = original.isLiked(by: userID)
+
+        // Optimistic update — modify locally before the network call
+        var updated = original
+        if alreadyLiked {
+            updated.likes = original.likes.filter { $0.user_id != userID }
+        } else {
+            updated.likes = original.likes + [RemoteLike(user_id: userID)]
+        }
+        feedPosts[index] = updated
+
+        // Sync with server
+        do {
+            if alreadyLiked {
+                try await client
+                    .from("likes")
+                    .delete()
+                    .eq("post_id", value: postID.uuidString)
+                    .eq("user_id", value: userID.uuidString)
+                    .execute()
+            } else {
+                try await client
+                    .from("likes")
+                    .insert(["post_id": postID.uuidString, "user_id": userID.uuidString])
+                    .execute()
+            }
+        } catch {
+            // Roll back on failure
+            feedPosts[index] = original
+        }
+    }
+
+    // MARK: - Comments
+
+    func loadComments(for postID: UUID) async -> [RemoteComment] {
+        do {
+            return try await client
+                .from("comments")
+                .select("*, profiles!user_id(username, display_name)")
+                .eq("post_id", value: postID.uuidString)
+                .order("created_at", ascending: true)
+                .execute()
+                .value
+        } catch {
+            return []
+        }
+    }
+
+    func addComment(postID: UUID, userID: UUID, content: String) async -> RemoteComment? {
+        struct NewComment: Encodable {
+            let post_id: UUID
+            let user_id: UUID
+            let content: String
+        }
+        do {
+            let comment: RemoteComment = try await client
+                .from("comments")
+                .insert(NewComment(post_id: postID, user_id: userID, content: content))
+                .select("*, profiles!user_id(username, display_name)")
+                .single()
+                .execute()
+                .value
+
+            // Bump local comment stub count
+            if let index = feedPosts.firstIndex(where: { $0.id == postID }) {
+                var updated = feedPosts[index]
+                updated.comments.append(RemoteCommentStub(id: comment.id))
+                feedPosts[index] = updated
+            }
+            return comment
+        } catch {
+            return nil
         }
     }
 
