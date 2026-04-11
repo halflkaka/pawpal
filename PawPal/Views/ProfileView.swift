@@ -279,6 +279,7 @@ struct ProfileView: View {
                     .background(PawPalTheme.orange.opacity(0.1), in: Capsule())
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("add-pet-button")
             }
             .padding(.horizontal, 20)
 
@@ -628,6 +629,7 @@ private struct ProfilePetEditorSheet: View {
                             VStack(spacing: 0) {
                                 fieldRow(label: "名字", required: true) {
                                     TextField("宠物名字", text: $name)
+                                        .accessibilityIdentifier("add-pet-name-field")
                                 }
                                 Divider().padding(.leading, 16)
                                 fieldRow(label: "品种") {
@@ -750,6 +752,7 @@ private struct ProfilePetEditorSheet: View {
                             }
                         }
                         .disabled(!canSave || isSaving)
+                        .accessibilityIdentifier("save-pet-button")
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 32)

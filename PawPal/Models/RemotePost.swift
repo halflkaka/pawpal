@@ -19,7 +19,10 @@ struct RemotePost: Identifiable, Codable {
         post_images.sorted { $0.position < $1.position }
     }
     var imageURLs: [URL] {
-        sortedImages.compactMap { URL(string: $0.url) }
+        sortedImages.compactMap {
+            guard let url = URL(string: $0.url), url.scheme != nil else { return nil }
+            return url
+        }
     }
     var likeCount: Int { likes.count }
     var commentCount: Int { comments.count }

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import PetHealth
+@testable import PawPal
 
 struct PawPalTests {
 

@@ -20,18 +20,21 @@ struct MainTabView: View {
                     FeedView(authManager: authManager)
                 }
             }
+            .accessibilityIdentifier("Home")
 
             Tab("发现", systemImage: "safari.fill", value: .discover) {
                 NavigationStack {
                     ContactsView()
                 }
             }
+            .accessibilityIdentifier("Discover")
 
             Tab("发布", systemImage: "plus.app.fill", value: .create) {
                 NavigationStack {
                     CreatePostView(authManager: authManager)
                 }
             }
+            .accessibilityIdentifier("Create")
 
             Tab("聊天", systemImage: "message.fill", value: .chats) {
                 NavigationStack {
@@ -39,6 +42,7 @@ struct MainTabView: View {
                 }
             }
             .badge(2)
+            .accessibilityIdentifier("Chats")
 
             Tab("我的", systemImage: "person.crop.circle.fill", value: .me) {
                 NavigationStack {
@@ -47,6 +51,7 @@ struct MainTabView: View {
                     }
                 }
             }
+            .accessibilityIdentifier("Pets")
         }
         .tint(PawPalTheme.orange)
         .toolbarBackground(PawPalTheme.surface, for: .tabBar)
