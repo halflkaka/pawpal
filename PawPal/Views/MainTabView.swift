@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct MainTabView: View {
     enum AppTab: Hashable {
@@ -50,5 +51,10 @@ struct MainTabView: View {
         .tint(PawPalTheme.orange)
         .toolbarBackground(PawPalTheme.surface, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
+        .onChange(of: selectedTab) { oldValue, newValue in
+            if oldValue != newValue {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        }
     }
 }

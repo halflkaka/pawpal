@@ -194,6 +194,41 @@ struct CreatePostView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Mood emoji picker
+
+    private var moodEmojiPicker: some View {
+        let moodEmojis = ["😊", "😍", "🤔", "😴", "🤩", "😻", "🥰", "🎉"]
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("心情标签")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.secondaryText)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(moodEmojis, id: \.self) { emoji in
+                        Button {
+                            mood = emoji == mood ? "" : emoji
+                        } label: {
+                            Text(emoji)
+                                .font(.system(size: 22))
+                                .frame(width: 44, height: 44)
+                                .background(
+                                    mood == emoji ? PawPalTheme.orange.opacity(0.2) : Color.clear,
+                                    in: Circle()
+                                )
+                                .overlay(
+                                    Circle().stroke(
+                                        mood == emoji ? PawPalTheme.orange : Color.clear,
+                                        lineWidth: 2
+                                    )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Text composer
 
     private var composerSection: some View {
@@ -208,14 +243,7 @@ struct CreatePostView: View {
             Divider()
                 .overlay(PawPalTheme.orangeGlow)
 
-            HStack(spacing: 8) {
-                Image(systemName: "face.smiling")
-                    .foregroundStyle(PawPalTheme.orangeSoft)
-                    .font(.system(size: 14))
-                TextField("加一个心情标签（例如：疯跑、午睡中…）", text: $mood)
-                    .font(.system(size: 13))
-                    .foregroundStyle(PawPalTheme.secondaryText)
-            }
+            moodEmojiPicker
         }
         .padding(16)
         .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -229,22 +257,31 @@ struct CreatePostView: View {
             HStack(spacing: 10) {
                 ForEach(Array(selectedImageData.enumerated()), id: \.offset) { index, data in
                     if let uiImage = UIImage(data: data) {
-                        ZStack(alignment: .topTrailing) {
-                            Image(uiImage: uiImage)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 100, height: 100)
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        ZStack(alignment: .topLeading) {
+                            ZStack(alignment: .topTrailing) {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 100, height: 100)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-                            Button {
-                                selectedImageData.remove(at: index)
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 18))
-                                    .foregroundStyle(.white)
-                                    .background(Color.black.opacity(0.4), in: Circle())
+                                Button {
+                                    selectedImageData.remove(at: index)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 18))
+                                        .foregroundStyle(.white)
+                                        .background(Color.black.opacity(0.4), in: Circle())
+                                }
+                                .offset(x: 6, y: -6)
                             }
-                            .offset(x: 6, y: -6)
+
+                            Text("\(index + 1)")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .frame(width: 28, height: 28)
+                                .background(PawPalTheme.orange, in: Circle())
+                                .offset(x: -6, y: -6)
                         }
                     }
                 }

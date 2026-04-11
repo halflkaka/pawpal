@@ -397,21 +397,64 @@ struct ProfileView: View {
             Divider()
 
             // Empty state — replaced with a real grid once posts go to Supabase
-            VStack(spacing: 14) {
-                Text("🐾")
-                    .font(.system(size: 48))
-                Text("还没有帖子")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundStyle(PawPalTheme.primaryText)
-                Text("去发布页分享一个瞬间，\n这里就会显示出来。")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-            }
-            .padding(.vertical, 64)
-            .padding(.horizontal, 32)
+            emptyPostsState
         }
+    }
+
+    // MARK: - Empty posts state
+
+    private var emptyPostsState: some View {
+        VStack(spacing: 16) {
+            Text("暂无帖子")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.primaryText)
+                .padding(.top, 24)
+            Text("分享你的宠物日常，开启社交新世界")
+                .font(.system(size: 14))
+                .foregroundStyle(PawPalTheme.secondaryText)
+                .multilineTextAlignment(.center)
+            VStack(spacing: 12) {
+                actionCard(
+                    icon: "square.and.pencil",
+                    title: "创建首条帖子",
+                    subtitle: "分享宠物的精彩时刻",
+                    color: PawPalTheme.orange
+                )
+                actionCard(
+                    icon: "person.badge.plus",
+                    title: "邀请朋友",
+                    subtitle: "和其他宠物主社交",
+                    color: Color.pink
+                )
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 40)
+        }
+    }
+
+    private func actionCard(icon: String, title: String, subtitle: String, color: Color) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(color, in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(PawPalTheme.primaryText)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(PawPalTheme.secondaryText)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14))
+                .foregroundStyle(PawPalTheme.tertiaryText)
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: PawPalTheme.shadow, radius: 8, y: 4)
     }
 
     // MARK: - Helpers

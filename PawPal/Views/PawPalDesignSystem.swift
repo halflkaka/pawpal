@@ -18,6 +18,18 @@ struct PawPalTheme {
     static let red = Color(red: 1.00, green: 0.28, blue: 0.34)
     static let shadow = Color(red: 0.48, green: 0.31, blue: 0.18).opacity(0.10)
     static let softShadow = Color(red: 0.48, green: 0.31, blue: 0.18).opacity(0.06)
+
+    static let gradientOrangeToSoft = LinearGradient(
+        colors: [PawPalTheme.orange, PawPalTheme.orangeSoft],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+    static let gradientImageOverlay = LinearGradient(
+        colors: [Color.black.opacity(0.0), Color.black.opacity(0.28)],
+        startPoint: .top,
+        endPoint: .bottom
+    )
+    static let accentLineColor = PawPalTheme.orange.opacity(0.24)
 }
 
 struct PawPalBackground: View {
@@ -53,6 +65,13 @@ struct PawPalCardModifier: ViewModifier {
 extension View {
     func pawPalCard(padding: CGFloat = 16) -> some View {
         modifier(PawPalCardModifier(padding: padding))
+    }
+
+    func bottomAccentLine() -> some View {
+        VStack(spacing: 0) {
+            self
+            Rectangle().fill(PawPalTheme.accentLineColor).frame(height: 1)
+        }
     }
 }
 
