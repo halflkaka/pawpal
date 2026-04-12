@@ -2,40 +2,22 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var authManager = AuthManager()
-    @State private var showRestoreOverlay = false
-    @State private var didFinishInitialRestore = false
+    @State private var hasStartedRestore = false
 
     var body: some View {
-        ZStack {
-            rootContent
-
-            if showRestoreOverlay {
-                restoreOverlay
-                    .transition(.opacity)
+        rootContent
+            .animation(.easeInOut(duration: 0.2), value: authManager.currentUser?.id)
+            .task {
+                guard !hasStartedRestore else { return }
+                hasStartedRestore = true
+                await authManager.restoreSession()
             }
-        }
-        .animation(.easeInOut(duration: 0.2), value: authManager.currentUser?.id)
-        .animation(.easeInOut(duration: 0.18), value: showRestoreOverlay)
-        .task {
-            await authManager.restoreSession()
-            didFinishInitialRestore = true
-        }
-        .task(id: authManager.isRestoringSession) {
-            if authManager.isRestoringSession {
-                try? await Task.sleep(for: .milliseconds(180))
-                if authManager.isRestoringSession {
-                    showRestoreOverlay = true
-                }
-            } else {
-                showRestoreOverlay = false
-            }
-        }
     }
 
     @ViewBuilder
     private var rootContent: some View {
-        if !didFinishInitialRestore {
-            startupPlaceholder
+        if authManager.isRestoringSession {
+            startupSurface
         } else if authManager.currentUser == nil {
             AuthView(authManager: authManager)
         } else {
@@ -43,12 +25,7 @@ struct ContentView: View {
         }
     }
 
-    private var startupPlaceholder: some View {
-        PawPalBackground()
-            .ignoresSafeArea()
-    }
-
-    private var restoreOverlay: some View {
+    private var startupSurface: some View {
         ZStack {
             PawPalBackground()
                 .ignoresSafeArea()
@@ -73,7 +50,6 @@ struct ContentView: View {
                     .tint(PawPalTheme.orange)
             }
         }
-        .allowsHitTesting(false)
     }
 }
 
