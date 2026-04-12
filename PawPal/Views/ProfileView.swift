@@ -44,6 +44,9 @@ struct ProfileView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top) { topBar }
+        .navigationDestination(for: RemotePet.self) { pet in
+            PetProfileView(pet: pet)
+        }
         .task { await loadAll() }
         .refreshable { await loadAll() }
         .sheet(isPresented: $showingAddPet, onDismiss: { statusMessage = nil }) {
@@ -360,6 +363,9 @@ struct ProfileView: View {
             withAnimation { activePetID = pet.id.uuidString }
         }
         .contextMenu {
+            NavigationLink(value: pet) {
+                Label("查看主页", systemImage: "pawprint.fill")
+            }
             Button {
                 withAnimation { activePetID = pet.id.uuidString }
             } label: {

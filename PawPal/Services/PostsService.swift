@@ -6,6 +6,7 @@ import Supabase
 final class PostsService: ObservableObject {
     @Published var feedPosts: [RemotePost] = []
     @Published var userPosts: [RemotePost] = []
+    @Published var petPosts: [RemotePost] = []
     @Published var isLoadingFeed = false
     @Published var isPosting = false
     @Published var errorMessage: String?
@@ -148,6 +149,44 @@ final class PostsService: ObservableObject {
             }
         }
         userPosts = []
+    }
+
+    // MARK: - Load Pet Posts (for pet profile page)
+
+    func loadPetPosts(for petID: UUID) async {
+        isLoadingFeed = true
+        errorMessage = nil
+        defer { isLoadingFeed = false }
+
+        let currentUserID = try? await client.auth.session.user.id
+
+        for select in Self.selectLevels {
+            do {
+                var posts: [RemotePost] = try await client
+                    .from("posts")
+                    .select(select)
+                    .eq("pet_id", value: petID.uuidString)
+                    .order("created_at", ascending: false)
+                    .execute()
+                    .value
+
+                if let currentUserID {
+                    for i in posts.indices {
+                        if posts[i].likes.isEmpty,
+                           let prev = petPosts.first(where: { $0.id == posts[i].id }),
+                           prev.likes.contains(where: { $0.user_id == currentUserID }) {
+                            posts[i].likes = [RemoteLike(user_id: currentUserID)]
+                        }
+                    }
+                }
+
+                petPosts = posts
+                return
+            } catch {
+                print("[PostsService] loadPetPosts select='\(select)' 失败: \(error)")
+            }
+        }
+        petPosts = []
     }
 
     // MARK: - Create Post
