@@ -113,10 +113,10 @@ supabase/
 └── 006–011_*.sql                      # Incremental schema migrations
 
 docs/
-├── architecture/database.md           # Schema design and table guide
-├── conventions/pr-template.md         # PR description standard
-├── guides/qa-and-testing.md           # QA process and test commands
-└── specs/                             # Dated working docs from agent sessions
+├── database.md                        # Schema design and table guide
+├── pr-template.md                     # PR description standard
+├── testing.md                         # QA process and test commands
+└── sessions/                          # Dated working docs from agent sessions
 
 .claude/
 ├── agents/dev-team.md                 # PM / designer / dev / QA agent configs
@@ -140,9 +140,9 @@ See `docs/guides/qa-and-testing.md` for the full QA process.
 
 | Doc | What it covers |
 |---|---|
-| `docs/guides/qa-and-testing.md` | How to validate changes |
-| `docs/architecture/database.md` | Schema design and table guide |
-| `docs/conventions/pr-template.md` | PR description standard |
+| `docs/testing.md` | How to validate changes |
+| `docs/database.md` | Schema design and table guide |
+| `docs/pr-template.md` | PR description standard |
 
 ---
 
