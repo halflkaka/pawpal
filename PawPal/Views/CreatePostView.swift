@@ -5,8 +5,9 @@ struct CreatePostView: View {
     @Bindable var authManager: AuthManager
     @AppStorage("activePetID") private var activePetID = ""
 
-    @StateObject private var petsService  = PetsService()
-    @StateObject private var postsService = PostsService()
+    @StateObject private var petsService   = PetsService()
+    @StateObject private var postsService  = PostsService()
+    @StateObject private var followService = FollowService()
 
     @State private var selectedPetID: UUID?
     @State private var caption = ""
@@ -72,7 +73,9 @@ struct CreatePostView: View {
         .toolbar(.hidden, for: .navigationBar)
         .task {
             if let user = authManager.currentUser {
-                await petsService.loadPets(for: user.id)
+                async let pets: () = petsService.loadPets(for: user.id)
+                async let follows: () = followService.loadFollowing(for: user.id)
+                _ = await (pets, follows)
             }
             if let activeID = UUID(uuidString: activePetID),
                petsService.pets.contains(where: { $0.id == activeID }) {
@@ -413,12 +416,17 @@ struct CreatePostView: View {
     private func savePost() async {
         guard canPost, let pet = selectedPet, let user = authManager.currentUser else { return }
 
+        let followingIDs = followService.followingIDs.isEmpty
+            ? nil
+            : followService.feedFilter(includingSelf: user.id)
+
         let success = await postsService.createPost(
             userID: user.id,
             petID: pet.id,
             caption: caption,
             mood: mood,
-            imageData: selectedImageData
+            imageData: selectedImageData,
+            followingIDs: followingIDs
         )
 
         if success {

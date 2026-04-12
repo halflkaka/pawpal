@@ -10,10 +10,7 @@ final class PetsService: ObservableObject {
     private let client: SupabaseClient
 
     init() {
-        guard let url = URL(string: SupabaseConfig.urlString) else {
-            fatalError("Invalid Supabase URL")
-        }
-        client = SupabaseClient(supabaseURL: url, supabaseKey: SupabaseConfig.anonKey)
+        client = SupabaseConfig.client
     }
 
     func loadPets(for userID: UUID) async {
