@@ -2,25 +2,44 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var authManager = AuthManager()
+    @State private var showRestoreOverlay = false
 
     var body: some View {
-        Group {
-            if authManager.isRestoringSession {
-                launchScreen
-            } else if authManager.currentUser == nil {
-                AuthView(authManager: authManager)
-            } else {
-                MainTabView(authManager: authManager)
+        ZStack {
+            rootContent
+
+            if showRestoreOverlay {
+                restoreOverlay
+                    .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: authManager.isRestoringSession)
         .animation(.easeInOut(duration: 0.2), value: authManager.currentUser?.id)
+        .animation(.easeInOut(duration: 0.18), value: showRestoreOverlay)
         .task {
             await authManager.restoreSession()
         }
+        .task(id: authManager.isRestoringSession) {
+            if authManager.isRestoringSession {
+                try? await Task.sleep(for: .milliseconds(180))
+                if authManager.isRestoringSession {
+                    showRestoreOverlay = true
+                }
+            } else {
+                showRestoreOverlay = false
+            }
+        }
     }
 
-    private var launchScreen: some View {
+    @ViewBuilder
+    private var rootContent: some View {
+        if authManager.currentUser == nil {
+            AuthView(authManager: authManager)
+        } else {
+            MainTabView(authManager: authManager)
+        }
+    }
+
+    private var restoreOverlay: some View {
         ZStack {
             PawPalBackground()
                 .ignoresSafeArea()
@@ -45,6 +64,7 @@ struct ContentView: View {
                     .tint(PawPalTheme.orange)
             }
         }
+        .allowsHitTesting(false)
     }
 }
 
