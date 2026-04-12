@@ -8,6 +8,7 @@ final class PostsService: ObservableObject {
     @Published var userPosts: [RemotePost] = []
     @Published var petPosts: [RemotePost] = []
     @Published var isLoadingFeed = false
+    @Published var isLoadingPetPosts = false
     @Published var isPosting = false
     @Published var errorMessage: String?
     @Published private(set) var commentCounts: [UUID: Int] = [:]
@@ -154,9 +155,9 @@ final class PostsService: ObservableObject {
     // MARK: - Load Pet Posts (for pet profile page)
 
     func loadPetPosts(for petID: UUID) async {
-        isLoadingFeed = true
+        isLoadingPetPosts = true
         errorMessage = nil
-        defer { isLoadingFeed = false }
+        defer { isLoadingPetPosts = false }
 
         let currentUserID = try? await client.auth.session.user.id
 
@@ -181,6 +182,11 @@ final class PostsService: ObservableObject {
                 }
 
                 petPosts = posts
+                await refreshLikes(for: posts.map(\.id))
+                for post in posts {
+                    commentCounts[post.id] = max(post.commentCount, commentCounts[post.id] ?? 0)
+                }
+                await refreshCommentCounts(for: posts.map(\.id))
                 return
             } catch {
                 print("[PostsService] loadPetPosts select='\(select)' 失败: \(error)")
@@ -279,6 +285,7 @@ final class PostsService: ObservableObject {
                 .execute()
             feedPosts.removeAll { $0.id == postID }
             userPosts.removeAll { $0.id == postID }
+            petPosts.removeAll { $0.id == postID }
             commentCounts[postID] = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -372,6 +379,9 @@ final class PostsService: ObservableObject {
                 }
                 if let index = userPosts.firstIndex(where: { $0.id == postID }) {
                     userPosts[index].likes = likes
+                }
+                if let index = petPosts.firstIndex(where: { $0.id == postID }) {
+                    petPosts[index].likes = likes
                 }
             }
         } catch {
@@ -535,6 +545,15 @@ final class PostsService: ObservableObject {
                 updated.comments.append(RemoteCommentStub(id: UUID()))
             }
             userPosts[index] = updated
+        }
+
+        if let index = petPosts.firstIndex(where: { $0.id == postID }) {
+            var updated = petPosts[index]
+            updated.comments = Array(updated.comments.prefix(count))
+            while updated.comments.count < count {
+                updated.comments.append(RemoteCommentStub(id: UUID()))
+            }
+            petPosts[index] = updated
         }
     }
 

@@ -125,7 +125,7 @@ struct PetProfileView: View {
 
             Divider()
 
-            if postsService.isLoadingFeed && postsService.petPosts.isEmpty {
+            if postsService.isLoadingPetPosts && postsService.petPosts.isEmpty {
                 ProgressView().padding(.top, 48)
             } else if postsService.petPosts.isEmpty {
                 emptyPostsState

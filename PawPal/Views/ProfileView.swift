@@ -16,6 +16,7 @@ struct ProfileView: View {
     @State private var profileErrorMessage: String?
     @State private var statusMessage: String?
     @State private var followerCount = 0
+    @State private var petToView: RemotePet?
     @StateObject private var followService = FollowService()
     @StateObject private var postsService = PostsService()
 
@@ -46,6 +47,12 @@ struct ProfileView: View {
         .safeAreaInset(edge: .top) { topBar }
         .navigationDestination(for: RemotePet.self) { pet in
             PetProfileView(pet: pet)
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { petToView != nil },
+            set: { if !$0 { petToView = nil } }
+        )) {
+            if let pet = petToView { PetProfileView(pet: pet) }
         }
         .task { await loadAll() }
         .refreshable { await loadAll() }
@@ -363,7 +370,9 @@ struct ProfileView: View {
             withAnimation { activePetID = pet.id.uuidString }
         }
         .contextMenu {
-            NavigationLink(value: pet) {
+            Button {
+                petToView = pet
+            } label: {
                 Label("查看主页", systemImage: "pawprint.fill")
             }
             Button {
