@@ -6,6 +6,62 @@ Entries are in reverse chronological order.
 
 ---
 
+## 2026-04-12 — Fix like persistence across fresh sessions ([#3](https://github.com/halflkaka/pawpal/pull/3))
+
+### Summary
+
+Fixed like state not persisting after closing and reopening the app. Adds a likes rehydration pass after feed load and makes `RemoteLike` decoding tolerant of different Supabase payload shapes.
+
+8 files changed.
+
+### Changes
+
+#### Bug Fixes
+- **Like state persistence** — added rehydration pass from the likes table after posts load so previously liked posts remain liked across fresh sessions
+- **RemoteLike decoding** — made decoder tolerant of different Supabase/PostgREST payload shapes instead of assuming one strict nested format
+
+#### UI
+- **ContactsView** — significant refresh of the discover screen
+- **FeedView, ProfileView, CreatePostView** — incremental improvements to feed and profile surfaces
+
+### Files Changed
+
+| Folder | Files |
+|---|---|
+| `PawPal/Models/` | `RemotePost.swift` |
+| `PawPal/Services/` | `FollowService.swift`, `PostsService.swift` |
+| `PawPal/Views/` | `ContactsView.swift`, `CreatePostView.swift`, `FeedView.swift`, `MainTabView.swift`, `ProfileView.swift` |
+
+---
+
+## 2026-04-12 — Follow flow and engagement count stability ([#2](https://github.com/halflkaka/pawpal/pull/2))
+
+### Summary
+
+Fixes like/comment counts flashing to 0 on feed reload, fixes follow count staying at 0 on profile, and introduces a dedicated `FollowService` with full follow/unfollow/toggle support and feed filtering by followed users.
+
+9 files changed.
+
+### Changes
+
+#### Features
+- **FollowService** — new dedicated service with load, follow, unfollow, toggle, and feed-filter helpers
+- **Follow-based feed filtering** — home feed can now scope to followed users plus self
+- **Shared Supabase client** — `SupabaseConfig.client` added so all services share the same authenticated session, improving RLS consistency
+
+#### Bug Fixes
+- **Engagement count flash** — preserved known local like/comment state during async feed reloads to prevent counts briefly showing 0
+- **Follow count on profile** — wired profile to load real follow data and bind stat to current following count
+
+### Files Changed
+
+| Folder | Files |
+|---|---|
+| `PawPal/Services/` | `AuthService.swift`, `FollowService.swift`, `PetsService.swift`, `PostsService.swift`, `ProfileService.swift`, `SupabaseConfig.swift` |
+| `PawPal/Views/` | `CreatePostView.swift`, `FeedView.swift`, `ProfileView.swift` |
+
+---
+
 ## 2026-04-11 — Performance improvements + UI upgrade ([#1](https://github.com/halflkaka/pawpal/pull/1))
 
 ### Summary
