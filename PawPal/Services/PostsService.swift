@@ -25,6 +25,11 @@ final class PostsService: ObservableObject {
     ]
     private static let commentOnlySelect = "id, comments(id)"
 
+    private struct LikeRow: Codable {
+        let post_id: UUID
+        let user_id: UUID
+    }
+
     init() {
         client = SupabaseConfig.client
     }
@@ -88,6 +93,7 @@ final class PostsService: ObservableObject {
                 }
 
                 feedPosts = mergedPosts
+                await refreshLikes(for: mergedPosts.map(\.id))
                 commentCounts = Dictionary(uniqueKeysWithValues: mergedPosts.map { post in
                     (post.id, max(post.commentCount, commentCounts[post.id] ?? 0))
                 })
@@ -131,6 +137,7 @@ final class PostsService: ObservableObject {
                 }
 
                 userPosts = mergedPosts
+                await refreshLikes(for: mergedPosts.map(\.id))
                 for post in mergedPosts {
                     commentCounts[post.id] = max(post.commentCount, commentCounts[post.id] ?? 0)
                 }
@@ -289,18 +296,48 @@ final class PostsService: ObservableObject {
         await syncLikes(for: postID)
     }
 
-    /// Fetches the real like list for one post and updates feedPosts in place.
+    /// Fetches the real like list for one post and updates feed/user posts in place.
     private func syncLikes(for postID: UUID) async {
-        struct LikeRow: Codable { let user_id: UUID }
         guard let likes = try? await client
             .from("likes")
             .select("user_id")
             .eq("post_id", value: postID.uuidString)
             .execute()
-            .value as [LikeRow],
-              let index = feedPosts.firstIndex(where: { $0.id == postID })
+            .value as [RemoteLike]
         else { return }
-        feedPosts[index].likes = likes.map { RemoteLike(user_id: $0.user_id) }
+
+        if let index = feedPosts.firstIndex(where: { $0.id == postID }) {
+            feedPosts[index].likes = likes
+        }
+        if let index = userPosts.firstIndex(where: { $0.id == postID }) {
+            userPosts[index].likes = likes
+        }
+    }
+
+    private func refreshLikes(for postIDs: [UUID]) async {
+        guard !postIDs.isEmpty else { return }
+
+        do {
+            let rows: [LikeRow] = try await client
+                .from("likes")
+                .select("post_id, user_id")
+                .in("post_id", values: postIDs.map(\.uuidString))
+                .execute()
+                .value
+
+            let grouped = Dictionary(grouping: rows, by: \.post_id)
+            for postID in postIDs {
+                let likes = (grouped[postID] ?? []).map { RemoteLike(user_id: $0.user_id) }
+                if let index = feedPosts.firstIndex(where: { $0.id == postID }) {
+                    feedPosts[index].likes = likes
+                }
+                if let index = userPosts.firstIndex(where: { $0.id == postID }) {
+                    userPosts[index].likes = likes
+                }
+            }
+        } catch {
+            print("[PostsService] refreshLikes 批量查询失败: \(error)")
+        }
     }
 
     // MARK: - Comments
