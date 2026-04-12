@@ -68,15 +68,59 @@ Build and run in Xcode. Register an account, add a pet, and create a post.
 
 ```
 PawPal/
-├── Models/          # Data structures (RemotePost, RemotePet, etc.)
-├── Services/        # Supabase API calls (PostsService, AuthService, etc.)
-├── Views/           # SwiftUI screens and components
-│   └── PawPalDesignSystem.swift  # Design tokens, reusable components
-├── Storage/         # Local data (unused — Supabase is source of truth)
-└── PawPalApp.swift  # App entry point
-supabase/            # SQL migrations
-docs/                # Guides, architecture, and conventions
-.claude/             # AI agent workflow configs
+├── Models/
+│   ├── AppUser.swift                  # Authenticated user session
+│   ├── RemotePost.swift               # Post with images, likes, comments
+│   ├── RemotePet.swift                # Pet profile data
+│   ├── RemoteComment.swift            # Comment with author info
+│   └── PostDraft.swift                # Draft post state
+├── Services/
+│   ├── AuthService.swift              # Auth protocol + Supabase implementation
+│   ├── AuthManager.swift              # Auth state manager (@Observable)
+│   ├── PostsService.swift             # Feed loading, post creation, likes, comments
+│   ├── PetsService.swift              # Pet CRUD
+│   ├── ProfileService.swift           # Profile loading and upserting
+│   ├── FollowService.swift            # Follow/unfollow, follower counts
+│   └── SupabaseConfig.swift           # Project URL and anon key (not committed)
+├── Views/
+│   ├── PawPalDesignSystem.swift       # Design tokens, colors, reusable components
+│   ├── ContentView.swift              # Root auth state router
+│   ├── MainTabView.swift              # 5-tab navigation shell
+│   ├── FeedView.swift                 # Home feed with post cards
+│   ├── CreatePostView.swift           # Post creation flow
+│   ├── ProfileView.swift              # User profile, pet management, post grid
+│   ├── ContactsView.swift             # Discover screen
+│   ├── CommentsView.swift             # Comments sheet
+│   ├── AuthView.swift                 # Login and registration
+│   └── ChatListView.swift             # Chat list (in progress)
+├── Storage/
+│   └── SwiftDataModels.swift          # Local models (unused — Supabase is source of truth)
+└── PawPalApp.swift                    # App entry point
+
+PawPalTests/
+└── PawPalTests.swift                  # Unit tests (models, validation logic)
+
+PawPalUITests/
+├── PawPalUITests.swift                # UI tests (launch, critical flows)
+└── PawPalUITestsLaunchTests.swift     # Launch performance baseline
+
+supabase/
+├── 001_schema.sql                     # Core tables
+├── 002_indexes.sql                    # Query indexes
+├── 003_rls.sql                        # Row-level security policies
+├── 004_storage.sql                    # Storage bucket setup
+├── 005_auth_profile_trigger.sql       # Auto-create profile on signup
+└── 006–011_*.sql                      # Incremental schema migrations
+
+docs/
+├── architecture/database.md           # Schema design and table guide
+├── conventions/pr-template.md         # PR description standard
+├── guides/qa-and-testing.md           # QA process and test commands
+└── specs/                             # Dated working docs from agent sessions
+
+.claude/
+├── agents/dev-team.md                 # PM / designer / dev / QA agent configs
+└── skills/pr-workflow.md              # PR creation workflow
 ```
 
 ---
