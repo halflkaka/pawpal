@@ -29,13 +29,21 @@ Never commit directly to `main`.
 
 ## Pull Requests
 
-Always follow the template at `docs/conventions/pr-template.md`.
+Always follow the template at `docs/pr-template.md`.
 
 Key rules:
 - Include a 1-2 sentence Summary with line count (`X files, +Y / -Z lines`)
 - Group changes by category (Performance, UI, Bug Fixes, etc.)
 - Files Changed table organized by folder
 - Validations section with ✅ / ⚠️ / ❌ and the exact test command used
+
+## Changelog
+
+After every PR is merged, add an entry to `CHANGELOG.md` at the repo root.
+
+- Copy the PR description directly — no need to rewrite it
+- Add a header: `## YYYY-MM-DD — PR title ([#N](url))`
+- Entries go at the top, in reverse chronological order
 
 ## Agent Workflows
 
