@@ -16,7 +16,7 @@ xcodebuild test -project PawPal.xcodeproj -scheme PawPal \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-Run the full test suite after every major change before considering work done.
+Run the full test suite after every major change before considering work done. Follow the process in `docs/guides/qa-and-testing.md` — build, unit tests, UI tests, manual spot checks, then report results in the PR.
 
 ## Branch Naming
 
@@ -52,11 +52,16 @@ When running multi-agent tasks (PM → designer → dev → QA), use the configs
 ## Docs Structure
 
 ```
-CLAUDE.md                        ← you are here
+CLAUDE.md                           ← you are here
 .claude/
-├── skills/                      ← project-specific workflows
-└── agents/                      ← agent team role configs
+├── skills/                         ← project-specific workflows
+└── agents/                         ← agent team role configs
 docs/
-└── conventions/
-    └── pr-template.md           ← PR description standard
+├── architecture/
+│   └── database.md                 ← schema design and table guide
+├── conventions/
+│   └── pr-template.md              ← PR description standard
+├── guides/
+│   └── qa-and-testing.md           ← QA process and test commands
+└── specs/                          ← dated working docs from agent sessions
 ```

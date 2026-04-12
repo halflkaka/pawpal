@@ -1,40 +1,31 @@
-# PawPal
+# 🐾 PawPal
 
-A playful iPhone-first pet social app built in SwiftUI.
+A warm, social iPhone app for pet lovers. Share moments, discover other pets, and build a community around the animals you love.
 
-## What it does today
+---
 
-PawPal already includes a working social app core:
-- email sign in and registration with Supabase Auth
-- profile editing
-- pet add, edit, delete, and active-pet selection
-- feed loading from Supabase
-- create-post flow with pet selection and image upload
-- likes and comments
-- warm Chinese-first SwiftUI UI across the main screens
+## ✨ What it does
 
-Some areas are still in progress:
-- discovery is still partly demo/static
-- chat is still mostly a shell
-- deeper pet profile pages and follow systems are not finished yet
+- 📸 **Feed** — scroll through pet moments from people you follow
+- 🐶 **Pet profiles** — add your pets with photos, breed, bio, and personality
+- ✍️ **Create posts** — share photos, pick a mood, tag your pet
+- ❤️ **Likes & comments** — react to and discuss posts
+- 🔍 **Discover** — explore pets, places, and trending spots
+- 💬 **Chat** — message other pet owners *(in progress)*
 
-## Structure
+---
 
-- `PawPal/` — iOS SwiftUI app
-- `PawPalTests/` — test target
-- `PawPal.xcodeproj/` — Xcode project
-- `supabase/` — SQL migrations / backend setup files
-- `pet-health-backend/` — legacy backend from the earlier health-app phase
+## 🏗 Tech stack
 
-## Requirements
+| Layer | Technology |
+|---|---|
+| iOS app | Swift, SwiftUI |
+| Backend | Supabase (PostgreSQL, Auth, Storage) |
+| Design | Custom design system — warm cream, orange accents, rounded components |
 
-To run locally, you should have:
-- macOS with Xcode 16+
-- iOS Simulator support installed
-- a Supabase project
-- a bucket for post images
+---
 
-## Local setup
+## 🚀 Getting started
 
 ### 1. Clone and open
 
@@ -44,120 +35,80 @@ cd pawpal
 open PawPal.xcodeproj
 ```
 
-Then build the `PawPal` scheme in Xcode.
+Select an iPhone simulator (iPhone 16 or later) and hit ⌘R.
 
-### 2. Create a Supabase project
+### 2. Set up Supabase
 
-Create a new Supabase project at <https://supabase.com>.
+Create a free project at [supabase.com](https://supabase.com). You'll need the **Project URL** and **Anon key**.
 
-You will need:
-- Project URL
-- Anon key
+Apply the SQL migrations in `supabase/` in order using the Supabase SQL editor.
 
-### 3. Apply the database setup
+Your project needs these tables: `profiles`, `pets`, `posts`, `post_images`, `likes`, `comments`, `follows` — plus a public storage bucket named `post-images`.
 
-This repo includes Supabase migration/setup files under `supabase/`.
+### 3. Add your config
 
-Set up your database by applying the SQL there in order, using either:
-- the Supabase SQL editor, or
-- the Supabase CLI if you prefer local migration workflows
-
-At minimum, your Supabase project needs these app features working:
-- `profiles`
-- `pets`
-- `posts`
-- `post_images`
-- `likes`
-- `comments`
-- the related RLS policies
-- storage for post images
-
-The checked-in `supabase/` SQL now includes the current likes/comments setup and the `post_images` column alignment used by the app (`url` / `position`).
-
-If your schema is incomplete, some app surfaces may still load with fallback behavior, but posting, comments, or profile-linked features may be missing or partially degraded.
-
-### 4. Create the storage bucket
-
-Create a public storage bucket named:
-
-```text
-post-images
-```
-
-The app uploads post photos there.
-
-### 5. Add your Supabase config in Xcode
-
-The app expects a local `SupabaseConfig.swift` with your project credentials.
-
-If it does not already exist in your checkout, create:
-
-```text
-PawPal/SupabaseConfig.swift
-```
-
-with something like:
+Create `PawPal/SupabaseConfig.swift`:
 
 ```swift
-import Foundation
-
 enum SupabaseConfig {
     static let urlString = "https://YOUR_PROJECT.supabase.co"
-    static let anonKey = "YOUR_SUPABASE_ANON_KEY"
+    static let anonKey = "YOUR_ANON_KEY"
 }
 ```
 
-Do not commit your personal keys.
+Do not commit this file.
 
-### 6. Run the app
+### 4. Run
 
-Use an iPhone simulator, for example:
-- iPhone 16
+Build and run in Xcode. Register an account, add a pet, and create a post.
 
-Then:
-- register a new account
-- create your profile
-- add a pet
-- create a post
-- test likes and comments
+---
 
-## Development notes
+## 🗂 Project structure
 
-- Main UI is SwiftUI-native and iPhone-first
-- Current design direction uses warm cream backgrounds, rounded white cards, soft orange accents, and a playful pet-social tone
-- The app currently prefers graceful fallback behavior when some optional Supabase tables are not fully available yet
-- The legacy `pet-health-backend/` folder is not needed for the current PawPal iOS app flow
+```
+PawPal/
+├── Models/          # Data structures (RemotePost, RemotePet, etc.)
+├── Services/        # Supabase API calls (PostsService, AuthService, etc.)
+├── Views/           # SwiftUI screens and components
+│   └── PawPalDesignSystem.swift  # Design tokens, reusable components
+├── Storage/         # Local data (unused — Supabase is source of truth)
+└── PawPalApp.swift  # App entry point
+supabase/            # SQL migrations
+docs/                # Guides, architecture, and conventions
+.claude/             # AI agent workflow configs
+```
 
-## Troubleshooting
+---
 
-### Build fails because Supabase config is missing
+## 🧪 Running tests
 
-Make sure `PawPal/SupabaseConfig.swift` exists and contains a valid URL and anon key.
+```bash
+xcodebuild test -project PawPal.xcodeproj -scheme PawPal \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
 
-### App launches but login or feed does not work
+See `docs/guides/qa-and-testing.md` for the full QA process.
 
-Check:
-- Supabase URL / anon key are correct
-- the SQL schema has been applied
-- RLS policies are present
-- your storage bucket `post-images` exists
+---
 
-### Images do not appear after posting
+## 📚 Docs
 
-Check:
-- `post-images` bucket exists
-- storage policies allow upload/read for your test flow
-- `post_images` table exists and is linked correctly
+| Doc | What it covers |
+|---|---|
+| `docs/guides/qa-and-testing.md` | How to validate changes |
+| `docs/architecture/database.md` | Schema design and table guide |
+| `docs/conventions/pr-template.md` | PR description standard |
 
-## Current direction
+---
 
-PawPal is being refactored from a pet-health utility into a warm, social pet product with:
-- a home feed for pet moments
-- explore surfaces for pets, tags, and places
-- chat-style messaging screens
-- a share/create post flow
-- richer pet profile experiences
+## 🔧 Troubleshooting
 
-## Status
+**Build fails — Supabase config missing**
+Create `PawPal/SupabaseConfig.swift` with your project URL and anon key.
 
-The app shell has been renamed to PawPal and the main SwiftUI surfaces are actively being updated toward the new pet-social experience.
+**Login or feed not working**
+Check that your Supabase URL and anon key are correct, migrations are applied, and RLS policies are in place.
+
+**Images not loading after posting**
+Confirm the `post-images` storage bucket exists and has public read access.
