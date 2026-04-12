@@ -45,6 +45,8 @@ Apply the SQL migrations in `supabase/` in order using the Supabase SQL editor.
 
 Your project needs these tables: `profiles`, `pets`, `posts`, `post_images`, `likes`, `comments`, `follows` — plus a public storage bucket named `post-images`.
 
+Also apply the storage policy migration for `post-images` uploads. Image posting needs both table RLS and Storage `storage.objects` policies.
+
 ### 3. Add your config
 
 Create `PawPal/SupabaseConfig.swift`:
@@ -160,3 +162,6 @@ Check that your Supabase URL and anon key are correct, migrations are applied, a
 
 **Images not loading after posting**
 Confirm the `post-images` storage bucket exists and has public read access.
+
+**Posting with images fails with `new row violates row-level security policy`**
+The base `posts` table RLS may already be correct, but image posts also require Storage policies for the `post-images` bucket. This repo now includes `supabase/012_add_post_images_storage_policies.sql` for that. Apply it in Supabase SQL Editor if your live project was created before the migration existed. The current migration uses `owner = auth.uid()` for Storage writes, which matches Supabase's own Storage policy pattern more reliably than checking a path prefix. Without those Storage policies, text-only posts can work while image posts fail.

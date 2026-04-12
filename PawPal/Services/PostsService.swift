@@ -213,10 +213,9 @@ final class PostsService: ObservableObject {
         defer { isPosting = false }
 
         do {
-            // Generate the post ID client-side so we can use it for image
-            // paths without needing a select-back after the insert.
             let postID = UUID()
             let trimmedMood = mood.trimmingCharacters(in: .whitespacesAndNewlines)
+            var uploadedPaths: [String] = []
 
             struct NewPost: Encodable {
                 let id: UUID
@@ -226,7 +225,6 @@ final class PostsService: ObservableObject {
                 let mood: String?
             }
 
-            // Bare insert — no .select() so no FK join can break it
             try await client
                 .from("posts")
                 .insert(NewPost(
@@ -238,36 +236,52 @@ final class PostsService: ObservableObject {
                 ))
                 .execute()
 
-            // Upload images (non-fatal if storage isn't configured yet)
             if !imageData.isEmpty {
-                var insertPayloads: [[String: String]] = []
-                for (index, data) in imageData.enumerated() {
-                    let jpeg = compressToJPEG(data)
-                    let path = "\(userID.uuidString)/\(postID.uuidString)/\(index).jpg"
-                    do {
+                struct NewPostImage: Encodable {
+                    let post_id: UUID
+                    let url: String
+                    let position: Int
+                }
+
+                do {
+                    var insertPayloads: [NewPostImage] = []
+                    for (index, data) in imageData.enumerated() {
+                        let jpeg = compressToJPEG(data)
+                        let path = "\(userID.uuidString)/\(postID.uuidString)/\(index).jpg"
                         _ = try await client.storage
                             .from(storageBucket)
                             .upload(path, data: jpeg, options: FileOptions(contentType: "image/jpeg", upsert: true))
+                        uploadedPaths.append(path)
                         let publicURL = try client.storage.from(storageBucket).getPublicURL(path: path)
-                        insertPayloads.append([
-                            "post_id": postID.uuidString,
-                            "url": publicURL.absoluteString,
-                            "position": "\(index)"
-                        ])
-                    } catch {
-                        print("[PostsService] 图片上传失败 index=\(index): \(error)")
+                        insertPayloads.append(NewPostImage(
+                            post_id: postID,
+                            url: publicURL.absoluteString,
+                            position: index
+                        ))
                     }
-                }
-                if !insertPayloads.isEmpty {
-                    try await client.from("post_images").insert(insertPayloads).execute()
+                    if !insertPayloads.isEmpty {
+                        try await client.from("post_images").insert(insertPayloads).execute()
+                    }
+                } catch {
+                    if !uploadedPaths.isEmpty {
+                        try? await client.storage.from(storageBucket).remove(paths: uploadedPaths)
+                    }
+                    try? await client
+                        .from("posts")
+                        .delete()
+                        .eq("id", value: postID.uuidString)
+                        .eq("owner_user_id", value: userID.uuidString)
+                        .execute()
+                    let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    print("[PostsService] 图片处理失败（已回滚动态与存储文件）: \(msg)")
+                    throw error
                 }
             }
 
             await loadFeed(followingIDs: followingIDs)
-            errorMessage = nil   // post succeeded — don't show any feed-load noise
+            errorMessage = nil
             return true
         } catch {
-            // Surface the real error so it's visible during development
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             print("[PostsService] createPost 失败: \(msg)")
             errorMessage = msg
@@ -280,6 +294,11 @@ final class PostsService: ObservableObject {
     func deletePost(_ postID: UUID, userID: UUID) async {
         errorMessage = nil
         do {
+            let storagePaths = storagePathsForPost(postID, userID: userID)
+            if !storagePaths.isEmpty {
+                try? await client.storage.from(storageBucket).remove(paths: storagePaths)
+            }
+
             try await client
                 .from("posts")
                 .delete()
@@ -290,6 +309,7 @@ final class PostsService: ObservableObject {
             userPosts.removeAll { $0.id == postID }
             petPosts.removeAll { $0.id == postID }
             commentCounts[postID] = nil
+            commentPreviews[postID] = nil
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -390,6 +410,27 @@ final class PostsService: ObservableObject {
         } catch {
             print("[PostsService] refreshLikes 批量查询失败: \(error)")
         }
+    }
+
+    private func storagePathsForPost(_ postID: UUID, userID: UUID) -> [String] {
+        let candidatePosts = feedPosts + userPosts + petPosts
+        let images = candidatePosts.first(where: { $0.id == postID })?.post_images ?? []
+
+        if !images.isEmpty {
+            let parsed = images.compactMap { storagePath(from: $0.url) }
+            if !parsed.isEmpty {
+                return parsed
+            }
+        }
+
+        return ["\(userID.uuidString)/\(postID.uuidString)"]
+    }
+
+    private func storagePath(from publicURL: String) -> String? {
+        guard let url = URL(string: publicURL) else { return nil }
+        let marker = "/storage/v1/object/public/\(storageBucket)/"
+        guard let range = url.absoluteString.range(of: marker) else { return nil }
+        return String(url.absoluteString[range.upperBound...])
     }
 
     // MARK: - Comments
