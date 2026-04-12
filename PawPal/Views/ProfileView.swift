@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 struct ProfileView: View {
     let user: AppUser
@@ -52,14 +53,14 @@ struct ProfileView: View {
                 pet: nil,
                 isSaving: isSavingPet,
                 errorMessage: petsService.errorMessage
-            ) { name, species, breed, sex, age, weight, homeCity, bio in
+            ) { name, species, breed, sex, age, weight, homeCity, bio, avatarData in
                 guard !isSavingPet else { return false }
                 isSavingPet = true
                 defer { isSavingPet = false }
                 let saved = await petsService.addPet(
                     for: user.id, name: name, species: species,
                     breed: breed, sex: sex, age: age, weight: weight,
-                    homeCity: homeCity, bio: bio
+                    homeCity: homeCity, bio: bio, avatarData: avatarData
                 )
                 if saved != nil {
                     if activePetID.isEmpty {
@@ -77,7 +78,7 @@ struct ProfileView: View {
                 pet: pet,
                 isSaving: isSavingPet,
                 errorMessage: petsService.errorMessage
-            ) { name, species, breed, sex, age, weight, homeCity, bio in
+            ) { name, species, breed, sex, age, weight, homeCity, bio, avatarData in
                 guard !isSavingPet else { return false }
                 isSavingPet = true
                 defer { isSavingPet = false }
@@ -85,7 +86,7 @@ struct ProfileView: View {
                 updated.name = name; updated.species = species; updated.breed = breed
                 updated.sex = sex; updated.age = age; updated.weight = weight
                 updated.home_city = homeCity; updated.bio = bio
-                await petsService.updatePet(updated, for: user.id)
+                await petsService.updatePet(updated, for: user.id, avatarData: avatarData)
                 if petsService.errorMessage == nil {
                     statusMessage = "已更新宠物"
                     return true
@@ -320,28 +321,33 @@ struct ProfileView: View {
         let isActive = pet.id.uuidString == activePetID
         return VStack(spacing: 8) {
             ZStack {
-                if isActive {
-                    Circle()
-                        .fill(
-                            LinearGradient(
+                // Background ring
+                Circle()
+                    .fill(isActive
+                          ? AnyShapeStyle(LinearGradient(
                                 colors: [PawPalTheme.orange, PawPalTheme.orangeSoft],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 68, height: 68)
-                } else {
-                    Circle()
-                        .fill(PawPalTheme.cardSoft)
-                        .frame(width: 68, height: 68)
-                        .overlay(
-                            Circle().stroke(PawPalTheme.orangeGlow, lineWidth: 1.5)
-                        )
-                }
+                                startPoint: .topLeading, endPoint: .bottomTrailing))
+                          : AnyShapeStyle(PawPalTheme.cardSoft))
+                    .frame(width: 68, height: 68)
+                    .overlay(!isActive ? Circle().stroke(PawPalTheme.orangeGlow, lineWidth: 1.5) : nil)
 
-                Image(systemName: iconName(for: pet.species ?? ""))
-                    .font(.system(size: 28, weight: .medium))
-                    .foregroundStyle(isActive ? .white : PawPalTheme.orange)
+                if let urlStr = pet.avatar_url, let url = URL(string: urlStr) {
+                    AsyncImage(url: url) { phase in
+                        if case .success(let img) = phase {
+                            img.resizable().scaledToFill()
+                                .frame(width: 68, height: 68)
+                                .clipShape(Circle())
+                        } else {
+                            Image(systemName: iconName(for: pet.species ?? ""))
+                                .font(.system(size: 28, weight: .medium))
+                                .foregroundStyle(isActive ? .white : PawPalTheme.orange)
+                        }
+                    }
+                } else {
+                    Image(systemName: iconName(for: pet.species ?? ""))
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(isActive ? .white : PawPalTheme.orange)
+                }
             }
             .shadow(
                 color: isActive ? PawPalTheme.orange.opacity(0.35) : PawPalTheme.softShadow,
@@ -620,6 +626,9 @@ private struct ProfilePetEditorSheet: View {
     @State private var weightUnit: String
     @State private var homeCity: String
     @State private var bio: String
+    @State private var pickedAvatarItem: PhotosPickerItem?
+    @State private var pickedAvatarData: Data?
+    @State private var pickedAvatarImage: Image?
 
     private let ageUnits    = ["岁", "个月"]
     private let weightUnits = ["公斤", "斤"]
@@ -629,19 +638,21 @@ private struct ProfilePetEditorSheet: View {
     ]
 
     let title: String
+    let existingAvatarURL: String?
     let isSaving: Bool
     let errorMessage: String?
-    let onSave: (String, String, String, String, String, String, String, String) async -> Bool
+    let onSave: (String, String, String, String, String, String, String, String, Data?) async -> Bool
 
     init(
         title: String, pet: RemotePet?, isSaving: Bool,
         errorMessage: String?,
-        onSave: @escaping (String, String, String, String, String, String, String, String) async -> Bool
+        onSave: @escaping (String, String, String, String, String, String, String, String, Data?) async -> Bool
     ) {
-        self.title        = title
-        self.isSaving     = isSaving
-        self.errorMessage = errorMessage
-        self.onSave       = onSave
+        self.title            = title
+        self.existingAvatarURL = pet?.avatar_url
+        self.isSaving         = isSaving
+        self.errorMessage     = errorMessage
+        self.onSave           = onSave
         _name     = State(initialValue: pet?.name ?? "")
         _species  = State(initialValue: pet?.species?.isEmpty == false ? pet!.species! : "Dog")
         _breed    = State(initialValue: pet?.breed ?? "")
@@ -664,11 +675,33 @@ private struct ProfilePetEditorSheet: View {
                 ScrollView {
                     VStack(spacing: 24) {
 
-                        // MARK: Header
+                        // MARK: Header with avatar picker
                         VStack(spacing: 10) {
-                            Text(speciesEmoji(for: species))
-                                .font(.system(size: 64))
-                                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: species)
+                            PhotosPicker(
+                                selection: $pickedAvatarItem,
+                                matching: .images,
+                                photoLibrary: .shared()
+                            ) {
+                                ZStack(alignment: .bottomTrailing) {
+                                    avatarPreview
+                                    Image(systemName: "camera.fill")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 26, height: 26)
+                                        .background(PawPalTheme.orange, in: Circle())
+                                        .offset(x: 4, y: 4)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .onChange(of: pickedAvatarItem) { _, item in
+                                Task {
+                                    guard let data = try? await item?.loadTransferable(type: Data.self) else { return }
+                                    pickedAvatarData = data
+                                    if let uiImage = UIImage(data: data) {
+                                        pickedAvatarImage = Image(uiImage: uiImage)
+                                    }
+                                }
+                            }
 
                             Text(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                  ? title
@@ -676,6 +709,10 @@ private struct ProfilePetEditorSheet: View {
                                 .font(.system(size: 22, weight: .bold, design: .rounded))
                                 .foregroundStyle(PawPalTheme.primaryText)
                                 .animation(.easeInOut(duration: 0.15), value: name)
+
+                            Text("点击头像更换照片")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(PawPalTheme.tertiaryText)
                         }
                         .padding(.top, 24)
 
@@ -801,7 +838,8 @@ private struct ProfilePetEditorSheet: View {
                             Task {
                                 let ok = await onSave(
                                     name, species, breed, sex,
-                                    composedAge, composedWeight, homeCity, bio
+                                    composedAge, composedWeight, homeCity, bio,
+                                    pickedAvatarData
                                 )
                                 if ok { dismiss() }
                             }
@@ -840,6 +878,42 @@ private struct ProfilePetEditorSheet: View {
     }
 
     // MARK: - Subviews
+
+    private var avatarPreview: some View {
+        ZStack {
+            Circle()
+                .fill(LinearGradient(
+                    colors: [PawPalTheme.orange.opacity(0.2), PawPalTheme.cardSoft],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
+                .frame(width: 88, height: 88)
+
+            if let pickedImage = pickedAvatarImage {
+                pickedImage
+                    .resizable().scaledToFill()
+                    .frame(width: 88, height: 88)
+                    .clipShape(Circle())
+            } else if let urlStr = existingAvatarURL, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let img) = phase {
+                        img.resizable().scaledToFill()
+                            .frame(width: 88, height: 88)
+                            .clipShape(Circle())
+                    } else {
+                        Text(speciesEmoji(for: species))
+                            .font(.system(size: 44))
+                            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: species)
+                    }
+                }
+            } else {
+                Text(speciesEmoji(for: species))
+                    .font(.system(size: 44))
+                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: species)
+            }
+        }
+        .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.35), lineWidth: 3))
+        .shadow(color: PawPalTheme.orange.opacity(0.18), radius: 14, y: 6)
+    }
 
     private func speciesChip(_ option: (emoji: String, label: String)) -> some View {
         let selected = species == option.label

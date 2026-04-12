@@ -285,17 +285,7 @@ struct PostCard: View {
 
     private var cardHeader: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(
-                        colors: [PawPalTheme.orange.opacity(0.25), PawPalTheme.cardSoft],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    ))
-                    .frame(width: 44, height: 44)
-                Text(speciesEmoji(for: post.pet?.species ?? ""))
-                    .font(.system(size: 22))
-            }
-            .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.4), lineWidth: 2))
+            petAvatarCircle
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -502,6 +492,34 @@ struct PostCard: View {
 
             Spacer()
         }
+    }
+
+    private var petAvatarCircle: some View {
+        ZStack {
+            Circle()
+                .fill(LinearGradient(
+                    colors: [PawPalTheme.orange.opacity(0.25), PawPalTheme.cardSoft],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
+                .frame(width: 44, height: 44)
+
+            if let urlStr = post.pet?.avatar_url, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let img) = phase {
+                        img.resizable().scaledToFill()
+                            .frame(width: 44, height: 44)
+                            .clipShape(Circle())
+                    } else {
+                        Text(speciesEmoji(for: post.pet?.species ?? ""))
+                            .font(.system(size: 22))
+                    }
+                }
+            } else {
+                Text(speciesEmoji(for: post.pet?.species ?? ""))
+                    .font(.system(size: 22))
+            }
+        }
+        .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.4), lineWidth: 2))
     }
 
     private func reactionChip(icon: String, label: String) -> some View {

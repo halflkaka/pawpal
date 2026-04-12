@@ -116,16 +116,27 @@ struct PawPalPill: View {
 
 struct PawPalAvatar: View {
     let emoji: String
+    var imageURL: String? = nil
     var size: CGFloat = 52
     var background: Color = PawPalTheme.cardSoft
     var ringColor: Color? = nil
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(background)
-            Text(emoji)
-                .font(.system(size: size * 0.46))
+            Circle().fill(background)
+            if let urlString = imageURL, let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    default:
+                        Text(emoji).font(.system(size: size * 0.46))
+                    }
+                }
+                .clipShape(Circle())
+            } else {
+                Text(emoji).font(.system(size: size * 0.46))
+            }
         }
         .frame(width: size, height: size)
         .overlay {
