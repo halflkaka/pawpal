@@ -12,27 +12,48 @@ struct CommentsView: View {
     @State private var isLoading = false
     @State private var newComment = ""
     @State private var isSubmitting = false
+    @State private var deletingCommentID: UUID?
+    @State private var pendingDeleteComment: RemoteComment?
     @State private var errorMessage: String?
     @FocusState private var inputFocused: Bool
 
     var body: some View {
-        NavigationStack {
-            ZStack(alignment: .bottom) {
-                Color(.systemGroupedBackground).ignoresSafeArea()
+        VStack(spacing: 0) {
+            // Title bar (no NavigationStack — sheet drag handles dismissal)
+            HStack {
+                Text("评论")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(PawPalTheme.primaryText)
+                Spacer()
+                Button {
+                    inputFocused = false
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(PawPalTheme.tertiaryText)
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
 
+            Divider()
+
+            ZStack(alignment: .bottom) {
                 if isLoading && comments.isEmpty {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding(.bottom, 80)
                 } else if comments.isEmpty {
                     VStack(spacing: 14) {
-                        Text("💬")
-                            .font(.system(size: 48))
+                        Text("💬").font(.system(size: 44))
                         Text("还没有评论")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
                             .foregroundStyle(PawPalTheme.primaryText)
                         Text("来发第一条吧！")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -42,8 +63,7 @@ struct CommentsView: View {
                         ScrollView {
                             LazyVStack(spacing: 0) {
                                 ForEach(comments) { comment in
-                                    commentRow(comment)
-                                        .id(comment.id)
+                                    commentRow(comment).id(comment.id)
                                     if comment.id != comments.last?.id {
                                         Divider().padding(.leading, 60)
                                     }
@@ -60,6 +80,7 @@ struct CommentsView: View {
                     }
                 }
 
+                // Error + input bar pinned to bottom
                 VStack(spacing: 0) {
                     if let errorMessage {
                         Text(errorMessage)
@@ -73,16 +94,20 @@ struct CommentsView: View {
                     inputBar
                 }
             }
-            .navigationTitle("评论")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
-                }
-            }
         }
-        .task {
-            await reloadComments()
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        // Partial sheet — starts at ~55 % and can be dragged to full screen
+        .presentationDetents([.fraction(0.55), .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(24)
+        .task { await reloadComments() }
+        .alert("删除评论？", isPresented: deleteCommentAlertBinding, presenting: pendingDeleteComment) { comment in
+            Button("删除", role: .destructive) {
+                Task { await deleteComment(comment) }
+            }
+            Button("取消", role: .cancel) { pendingDeleteComment = nil }
+        } message: { _ in
+            Text("删除后将无法恢复。")
         }
     }
 
@@ -116,6 +141,23 @@ struct CommentsView: View {
             }
 
             Spacer(minLength: 0)
+
+            if comment.user_id == currentUserID {
+                Button {
+                    pendingDeleteComment = comment
+                } label: {
+                    if deletingCommentID == comment.id {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "trash")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.red)
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -204,6 +246,31 @@ struct CommentsView: View {
         if s < 3600  { return "\(s / 60)分钟前" }
         if s < 86400 { return "\(s / 3600)小时前" }
         return "\(s / 86400)天前"
+    }
+
+    private var deleteCommentAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteComment != nil },
+            set: { if !$0 { pendingDeleteComment = nil } }
+        )
+    }
+
+    private func deleteComment(_ comment: RemoteComment) async {
+        guard let userID = currentUserID, deletingCommentID == nil else { return }
+
+        deletingCommentID = comment.id
+        let deleted = await postsService.deleteComment(comment.id, postID: postID, userID: userID)
+        if deleted {
+            errorMessage = nil
+            withAnimation {
+                comments.removeAll { $0.id == comment.id }
+            }
+            await postsService.refreshCommentCount(for: postID)
+        } else {
+            errorMessage = postsService.errorMessage ?? "删除评论失败，请重试。"
+        }
+        pendingDeleteComment = nil
+        deletingCommentID = nil
     }
 
     private func reloadComments() async {

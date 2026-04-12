@@ -2,25 +2,35 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var authManager = AuthManager()
+    @State private var hasStartedRestore = false
 
     var body: some View {
-        Group {
-            if authManager.isRestoringSession {
-                launchScreen
-            } else if authManager.currentUser == nil {
-                AuthView(authManager: authManager)
-            } else {
-                MainTabView(authManager: authManager)
+        rootContent
+            .animation(.easeInOut(duration: 0.2), value: authManager.currentUser?.id)
+            .task {
+                guard !hasStartedRestore else { return }
+                hasStartedRestore = true
+                await authManager.restoreSession()
             }
-        }
-        .animation(.easeInOut(duration: 0.2), value: authManager.isRestoringSession)
-        .animation(.easeInOut(duration: 0.2), value: authManager.currentUser?.id)
-        .task {
-            await authManager.restoreSession()
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+        if authManager.currentUser != nil {
+            // We have a user — either from UserDefaults cache (fast path) or a
+            // confirmed session. Go straight to the app; restoreSession() will
+            // silently validate / refresh the token in the background.
+            MainTabView(authManager: authManager)
+        } else if authManager.isRestoringSession {
+            // No cached user and session check is in-flight — show splash once.
+            startupSurface
+        } else {
+            // Restore finished and no valid session found.
+            AuthView(authManager: authManager)
         }
     }
 
-    private var launchScreen: some View {
+    private var startupSurface: some View {
         ZStack {
             PawPalBackground()
                 .ignoresSafeArea()
