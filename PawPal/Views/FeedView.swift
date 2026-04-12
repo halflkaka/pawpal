@@ -510,8 +510,6 @@ struct PostCard: View {
                     if post.likeCount > 0 {
                         Text("\(post.likeCount)")
                             .contentTransition(.numericText())
-                    } else {
-                        Text("喜欢")
                     }
                 }
                 .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -530,7 +528,7 @@ struct PostCard: View {
 
             // Comment button — shows count when comments exist
             Button(action: onComment) {
-                reactionChip(icon: "message", label: commentCount > 0 ? "\(commentCount)" : "评论")
+                reactionChip(icon: "message", label: commentCount > 0 ? "\(commentCount)" : "")
             }
             .buttonStyle(.plain)
 
