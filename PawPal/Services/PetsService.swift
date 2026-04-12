@@ -103,9 +103,13 @@ final class PetsService: ObservableObject {
 
         var updatedAvatarURL: String? = pet.avatar_url
         if let avatarData {
-            updatedAvatarURL = try? await AvatarService().uploadPetAvatar(
+            if let uploaded = try? await AvatarService().uploadPetAvatar(
                 data: avatarData, ownerID: userID, petID: pet.id
-            )
+            ) {
+                updatedAvatarURL = uploaded
+            } else {
+                print("[PetsService] avatar upload 失败 — keeping existing URL")
+            }
         }
 
         let payload = PetUpdate(
