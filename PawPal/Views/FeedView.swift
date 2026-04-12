@@ -92,6 +92,9 @@ struct FeedView: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
+        .navigationDestination(for: RemotePet.self) { pet in
+            PetProfileView(pet: pet)
+        }
         .alert("删除这条动态？", isPresented: deletePostAlertBinding, presenting: pendingDeletePost) { post in
             Button("删除", role: .destructive) {
                 Task {
@@ -300,6 +303,7 @@ struct PostCard: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
+            petAvatarLink
             Spacer()
 
             if isOwnPost {
@@ -341,6 +345,47 @@ struct PostCard: View {
                 }
                 .buttonStyle(.plain)
                 .animation(.easeInOut(duration: 0.15), value: isFollowingOwner)
+            }
+        }
+    }
+
+    private var petAvatarLink: some View {
+        let avatarAndInfo = HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(
+                        colors: [PawPalTheme.orange.opacity(0.25), PawPalTheme.cardSoft],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 44, height: 44)
+                Text(speciesEmoji(for: post.pet?.species ?? ""))
+                    .font(.system(size: 22))
+            }
+            .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.4), lineWidth: 2))
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(post.pet?.name ?? "未知宠物")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                    if let species = post.pet?.species, !species.isEmpty {
+                        PawPalPill(text: speciesDisplayName(species), systemImage: nil, tint: PawPalTheme.orange.opacity(0.7))
+                    }
+                }
+                Text(relativeTime(from: post.created_at))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+
+        return Group {
+            if let pet = post.pet {
+                NavigationLink(value: pet) {
+                    avatarAndInfo
+                }
+                .buttonStyle(.plain)
+            } else {
+                avatarAndInfo
             }
         }
     }
