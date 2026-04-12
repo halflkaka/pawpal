@@ -12,6 +12,7 @@ struct MainTabView: View {
 
     @State private var selectedTab: AppTab = .feed
     @Bindable var authManager: AuthManager
+    @State private var createResetToken = UUID()
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -31,7 +32,11 @@ struct MainTabView: View {
 
             Tab("发布", systemImage: "plus.app.fill", value: .create) {
                 NavigationStack {
-                    CreatePostView(authManager: authManager)
+                    CreatePostView(authManager: authManager) {
+                        createResetToken = UUID()
+                        selectedTab = .feed
+                    }
+                    .id(createResetToken)
                 }
             }
             .accessibilityIdentifier("Create")

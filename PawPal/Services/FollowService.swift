@@ -90,6 +90,22 @@ final class FollowService: ObservableObject {
         followingIDs.contains(userID)
     }
 
+    func followerCount(for userID: UUID) async -> Int {
+        struct CountRow: Codable { let count: Int }
+        do {
+            let rows: [CountRow] = try await client
+                .from("follows")
+                .select("count", head: false)
+                .eq("followed_user_id", value: userID.uuidString)
+                .execute()
+                .value
+            return rows.first?.count ?? 0
+        } catch {
+            print("[FollowService] followerCount 失败: \(error)")
+            return 0
+        }
+    }
+
     /// IDs to pass to PostsService.loadFeed — includes self so own posts always appear
     func feedFilter(includingSelf selfID: UUID) -> [UUID] {
         Array(followingIDs) + [selfID]

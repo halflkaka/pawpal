@@ -7,6 +7,7 @@ struct FeedView: View {
     @StateObject private var followService = FollowService()
     @State private var commentingPost: RemotePost?
     @State private var toastMessage: String?
+    @State private var showingFeedInfo = false
 
     private var myID: UUID? { authManager.currentUser?.id }
 
@@ -152,8 +153,19 @@ struct FeedView: View {
                     .foregroundStyle(PawPalTheme.tertiaryText)
             }
             Spacer()
-            headerButton(systemImage: "magnifyingglass")
-            headerButton(systemImage: "bell.fill", badge: false)
+            Button {
+                showToast("搜索功能还在完善中")
+            } label: {
+                headerButton(systemImage: "magnifyingglass")
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                showToast("通知功能即将上线")
+            } label: {
+                headerButton(systemImage: "bell.fill", badge: false)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -443,11 +455,14 @@ struct PostCard: View {
             }
             .buttonStyle(.plain)
 
-            // Boop button (stub)
-            reactionChip(icon: "pawprint.fill", label: "贴贴")
+            Button {
+                onComment()
+            } label: {
+                reactionChip(icon: "pawprint.fill", label: "贴贴")
+            }
+            .buttonStyle(.plain)
 
             Spacer()
-            reactionChip(icon: "paperplane", label: "")
         }
     }
 
