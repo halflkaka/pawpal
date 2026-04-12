@@ -144,6 +144,9 @@ struct FeedView: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
+        .navigationDestination(for: RemotePet.self) { pet in
+            PetProfileView(pet: pet)
+        }
         .alert("删除这条动态？", isPresented: deletePostAlertBinding, presenting: pendingDeletePost) { post in
             Button("删除", role: .destructive) {
                 Task {
@@ -342,17 +345,7 @@ struct PostCard: View {
 
     private var cardHeader: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(
-                        colors: [PawPalTheme.orange.opacity(0.25), PawPalTheme.cardSoft],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    ))
-                    .frame(width: 44, height: 44)
-                Text(speciesEmoji(for: post.pet?.species ?? ""))
-                    .font(.system(size: 22))
-            }
-            .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.4), lineWidth: 2))
+            petAvatarCircle
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -367,6 +360,7 @@ struct PostCard: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
+            petAvatarLink
             Spacer()
 
             if isOwnPost {
@@ -405,6 +399,47 @@ struct PostCard: View {
                 }
                 .buttonStyle(.plain)
                 .animation(.easeInOut(duration: 0.15), value: isFollowingOwner)
+            }
+        }
+    }
+
+    private var petAvatarLink: some View {
+        let avatarAndInfo = HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(
+                        colors: [PawPalTheme.orange.opacity(0.25), PawPalTheme.cardSoft],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 44, height: 44)
+                Text(speciesEmoji(for: post.pet?.species ?? ""))
+                    .font(.system(size: 22))
+            }
+            .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.4), lineWidth: 2))
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(post.pet?.name ?? "未知宠物")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                    if let species = post.pet?.species, !species.isEmpty {
+                        PawPalPill(text: speciesDisplayName(species), systemImage: nil, tint: PawPalTheme.orange.opacity(0.7))
+                    }
+                }
+                Text(relativeTime(from: post.created_at))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+
+        return Group {
+            if let pet = post.pet {
+                NavigationLink(value: pet) {
+                    avatarAndInfo
+                }
+                .buttonStyle(.plain)
+            } else {
+                avatarAndInfo
             }
         }
     }
@@ -541,11 +576,38 @@ struct PostCard: View {
         }
     }
 
+    private var petAvatarCircle: some View {
+        ZStack {
+            Circle()
+                .fill(LinearGradient(
+                    colors: [PawPalTheme.orange.opacity(0.25), PawPalTheme.cardSoft],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
+                .frame(width: 44, height: 44)
+
+            if let urlStr = post.pet?.avatar_url, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let img) = phase {
+                        img.resizable().scaledToFill()
+                            .frame(width: 44, height: 44)
+                            .clipShape(Circle())
+                    } else {
+                        Text(speciesEmoji(for: post.pet?.species ?? ""))
+                            .font(.system(size: 22))
+                    }
+                }
+            } else {
+                Text(speciesEmoji(for: post.pet?.species ?? ""))
+                    .font(.system(size: 22))
+            }
+        }
+        .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.4), lineWidth: 2))
+    }
+
     // MARK: - Comment Previews (Instagram / WeChat style)
 
     private var commentPreviewSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // "查看全部 N 条评论" link — shown when there are more than the 2 we preview
             if commentCount > commentPreviews.count {
                 Button(action: onComment) {
                     Text("查看全部 \(commentCount) 条评论")
@@ -555,7 +617,6 @@ struct PostCard: View {
                 .buttonStyle(.plain)
             }
 
-            // Inline comment rows: bold author name + content on one line
             ForEach(commentPreviews) { comment in
                 Button(action: onComment) {
                     (Text(comment.authorName)
@@ -570,7 +631,6 @@ struct PostCard: View {
                 .buttonStyle(.plain)
             }
 
-            // Subtle tap-to-comment prompt when there are no comments yet
             if commentCount == 0 {
                 Button(action: onComment) {
                     Text("添加评论…")

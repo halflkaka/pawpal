@@ -1,44 +1,48 @@
 # PawPal Roadmap
 
 ## Current State
-- ✅ Auth (sign in / register)
-- ✅ User profile + pet management
-- 🔲 Posts (local SwiftData stub only)
-- 🔲 Feed (stub)
-- 🔲 Chat (stub)
+
+Phases 1 and 2 are complete. Phase 3 is partially done. Phases 4–6 are upcoming.
 
 ---
 
-## Phase 1 — Real Posts & Feed
-Wire the social core to Supabase.
+## Phase 1 — Real Posts & Feed ✅ Complete
 
-- `PostsService` — fetch posts and images from `posts` + `post_images` tables, paginated
-- Photo picker + upload to Supabase Storage, store URLs in `post_images`
-- Real `FeedView` — scrolling feed with pet avatar, caption, images, mood tag, like/comment counts
-- `CreatePostView` — save posts remotely instead of locally
-- Retire `StoredPost` SwiftData model
+- Real feed loading from Supabase with multi-level query fallback for resilience
+- Post creation with image upload to Supabase Storage
+- `CreatePostView` fully wired — pet selection, caption, mood, images
+- SwiftData local models retired
 
-## Phase 2 — Engagement
-- Likes and comments on posts
-- Follow / unfollow other users
-- Notification badges
-- "Following" feed tab filtered to accounts you follow
+## Phase 2 — Engagement ✅ Complete
 
-## Phase 3 — Discovery
-- Explore / search page — browse pets by species, find users by username, trending posts
-- Hashtag or mood-tag filtering (`mood` field already exists on `posts` table)
+- Likes and comments on posts — real Supabase queries with optimistic updates
+- Follow / unfollow — `FollowService` with real follow/unfollow/toggle and follower counts
+- Feed filtered to followed users + self
+- ⚠️ Notification badges not yet implemented
 
-## Phase 4 — Pet Profiles as First-Class Pages
-- Tapping a pet chip opens a dedicated pet profile — photo, bio, stats, post grid
-- Pet-specific follow (follow a pet, not just a user)
-- Profile photo upload for user avatars and pet avatars
+## Phase 3 — Discovery ⚠️ Partial
 
-## Phase 5 — Messaging
-- Direct messages between users
-- `ChatListView` stub already in codebase — wire to Supabase Realtime or a messages table
+- `ContactsView` loads real posts and supports filtering by mood and species
+- Search works client-side across pet name, species, breed, city, caption, mood
+- Trending topics derived dynamically from real post data
+- 🔲 True pet-first explore (browse by breed, find pets near you) not yet built — current discovery is post-based filtering, not pet-based browsing
 
-## Phase 6 — Polish & Growth
+## Phase 4 — Pet Profiles as First-Class Pages 🔲 Not started
+
+- Pet management (add, edit, delete) is fully real in `ProfileView`
+- 🔲 Dedicated pet profile page — tap a pet to see its photo, bio, stats, post grid
+- 🔲 Pet-specific follow (follow a pet, not just a user)
+- 🔲 Profile photo upload for user avatars and pet avatars
+
+## Phase 5 — Messaging 🔲 Stub only
+
+- `ChatListView` exists with hardcoded placeholder chat previews
+- No backend, no service, no real data
+- Requires Supabase Realtime or a messages table
+
+## Phase 6 — Polish & Growth 🔲 Not started
+
 - Push notifications (likes, comments, new followers)
 - Onboarding flow for new users
-- App Store assets, privacy policy, TestFlight beta
 - Feed algorithm (recency + social graph weighting)
+- App Store assets, privacy policy, TestFlight beta

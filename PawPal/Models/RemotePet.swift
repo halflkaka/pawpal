@@ -1,6 +1,6 @@
 import Foundation
 
-struct RemotePet: Identifiable, Codable, Equatable {
+struct RemotePet: Identifiable, Codable, Equatable, Hashable {
     let id: UUID
     let owner_user_id: UUID
     var name: String
@@ -11,6 +11,7 @@ struct RemotePet: Identifiable, Codable, Equatable {
     var weight: String?
     var home_city: String?
     var bio: String?
+    var avatar_url: String?
 
     var hometown: String? {
         get { home_city }
