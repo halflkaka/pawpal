@@ -4,7 +4,9 @@ import Supabase
 @MainActor
 final class PetsService: ObservableObject {
     @Published var pets: [RemotePet] = []
+    @Published var allPets: [RemotePet] = []
     @Published var isLoading = false
+    @Published var isLoadingAll = false
     @Published var errorMessage: String?
 
     private let client: SupabaseClient
@@ -29,6 +31,26 @@ final class PetsService: ObservableObject {
             pets = response
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Load All Pets (for discovery)
+
+    func loadAllPets() async {
+        isLoadingAll = true
+        defer { isLoadingAll = false }
+
+        do {
+            let response: [RemotePet] = try await client
+                .from("pets")
+                .select()
+                .order("created_at", ascending: false)
+                .limit(60)
+                .execute()
+                .value
+            allPets = response
+        } catch {
+            print("[PetsService] loadAllPets 失败: \(error)")
         }
     }
 
