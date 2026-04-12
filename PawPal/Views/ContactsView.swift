@@ -89,7 +89,7 @@ struct ContactsView: View {
             }
         }
         .onChange(of: discoverTab) { _, tab in
-            if tab == .pets && petsService.allPets.isEmpty {
+            if tab == .pets && petsService.allPets.isEmpty && !petsService.isLoadingAll {
                 Task { await petsService.loadAllPets() }
             }
         }
@@ -326,6 +326,17 @@ struct ContactsView: View {
         Group {
             if petsService.isLoadingAll && petsService.allPets.isEmpty {
                 petsLoadingState
+            } else if let error = petsService.errorMessage, petsService.allPets.isEmpty {
+                VStack(spacing: 12) {
+                    Text("⚠️")
+                        .font(.system(size: 40))
+                    Text(error)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, 48)
+                .padding(.horizontal, 32)
             } else if filteredPets.isEmpty {
                 petsEmptyState
             } else {

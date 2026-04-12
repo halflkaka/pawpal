@@ -49,8 +49,10 @@ final class PetsService: ObservableObject {
                 .execute()
                 .value
             allPets = response
+            errorMessage = nil
         } catch {
             print("[PetsService] loadAllPets 失败: \(error)")
+            errorMessage = "宠物加载失败，下拉可重试。"
         }
     }
 
