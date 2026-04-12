@@ -468,6 +468,45 @@ final class PostsService: ObservableObject {
         return comment
     }
 
+    func deleteComment(_ commentID: UUID, postID: UUID, userID: UUID) async -> Bool {
+        errorMessage = nil
+
+        do {
+            try await client
+                .from("comments")
+                .delete()
+                .eq("id", value: commentID.uuidString)
+                .eq("user_id", value: userID.uuidString)
+                .execute()
+
+            commentPreviews[postID]?.removeAll { $0.id == commentID }
+
+            let nextCount = max((commentCounts[postID] ?? currentCommentCount(for: postID)) - 1, 0)
+            commentCounts[postID] = nextCount
+            syncCommentCount(postID: postID, count: nextCount)
+
+            if let index = feedPosts.firstIndex(where: { $0.id == postID }) {
+                var updated = feedPosts[index]
+                updated.comments.removeAll { $0.id == commentID }
+                feedPosts[index] = updated
+            }
+
+            if let index = userPosts.firstIndex(where: { $0.id == postID }) {
+                var updated = userPosts[index]
+                updated.comments.removeAll { $0.id == commentID }
+                userPosts[index] = updated
+            }
+
+            await refreshCommentCount(for: postID)
+            await loadCommentPreviews(for: [postID])
+            return true
+        } catch {
+            errorMessage = "删除评论失败，请重试。"
+            print("[PostsService] deleteComment 失败: \(error)")
+            return false
+        }
+    }
+
     private func bumpCommentStub(postID: UUID, commentID: UUID) {
         if let index = feedPosts.firstIndex(where: { $0.id == postID }), !feedPosts[index].comments.contains(where: { $0.id == commentID }) {
             var updated = feedPosts[index]

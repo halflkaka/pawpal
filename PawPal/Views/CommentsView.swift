@@ -12,6 +12,8 @@ struct CommentsView: View {
     @State private var isLoading = false
     @State private var newComment = ""
     @State private var isSubmitting = false
+    @State private var deletingCommentID: UUID?
+    @State private var pendingDeleteComment: RemoteComment?
     @State private var errorMessage: String?
     @FocusState private var inputFocused: Bool
 
@@ -99,6 +101,14 @@ struct CommentsView: View {
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(24)
         .task { await reloadComments() }
+        .alert("删除评论？", isPresented: deleteCommentAlertBinding, presenting: pendingDeleteComment) { comment in
+            Button("删除", role: .destructive) {
+                Task { await deleteComment(comment) }
+            }
+            Button("取消", role: .cancel) { pendingDeleteComment = nil }
+        } message: { _ in
+            Text("删除后将无法恢复。")
+        }
     }
 
     // MARK: - Comment row
@@ -131,6 +141,23 @@ struct CommentsView: View {
             }
 
             Spacer(minLength: 0)
+
+            if comment.user_id == currentUserID {
+                Button {
+                    pendingDeleteComment = comment
+                } label: {
+                    if deletingCommentID == comment.id {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "trash")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.red)
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -219,6 +246,31 @@ struct CommentsView: View {
         if s < 3600  { return "\(s / 60)分钟前" }
         if s < 86400 { return "\(s / 3600)小时前" }
         return "\(s / 86400)天前"
+    }
+
+    private var deleteCommentAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteComment != nil },
+            set: { if !$0 { pendingDeleteComment = nil } }
+        )
+    }
+
+    private func deleteComment(_ comment: RemoteComment) async {
+        guard let userID = currentUserID, deletingCommentID == nil else { return }
+
+        deletingCommentID = comment.id
+        let deleted = await postsService.deleteComment(comment.id, postID: postID, userID: userID)
+        if deleted {
+            errorMessage = nil
+            withAnimation {
+                comments.removeAll { $0.id == comment.id }
+            }
+            await postsService.refreshCommentCount(for: postID)
+        } else {
+            errorMessage = postsService.errorMessage ?? "删除评论失败，请重试。"
+        }
+        pendingDeleteComment = nil
+        deletingCommentID = nil
     }
 
     private func reloadComments() async {
