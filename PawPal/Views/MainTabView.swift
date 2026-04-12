@@ -13,12 +13,14 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .feed
     @Bindable var authManager: AuthManager
     @State private var createResetToken = UUID()
+    /// Rotated each time the user publishes a post — signals FeedView to reload.
+    @State private var feedRefreshID = UUID()
 
     var body: some View {
         TabView(selection: $selectedTab) {
             Tab("首页", systemImage: "house.fill", value: .feed) {
                 NavigationStack {
-                    FeedView(authManager: authManager)
+                    FeedView(authManager: authManager, postPublishedID: feedRefreshID)
                 }
             }
             .accessibilityIdentifier("Home")
@@ -34,6 +36,7 @@ struct MainTabView: View {
                 NavigationStack {
                     CreatePostView(authManager: authManager) {
                         createResetToken = UUID()
+                        feedRefreshID = UUID()   // tell FeedView a new post exists
                         selectedTab = .feed
                     }
                     .id(createResetToken)
@@ -52,7 +55,9 @@ struct MainTabView: View {
             Tab("我的", systemImage: "person.crop.circle.fill", value: .me) {
                 NavigationStack {
                     if let user = authManager.currentUser {
-                        ProfileView(user: user, authManager: authManager)
+                        ProfileView(user: user, authManager: authManager) {
+                            selectedTab = .create
+                        }
                     }
                 }
             }

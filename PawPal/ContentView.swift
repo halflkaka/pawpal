@@ -16,12 +16,17 @@ struct ContentView: View {
 
     @ViewBuilder
     private var rootContent: some View {
-        if authManager.isRestoringSession {
-            startupSurface
-        } else if authManager.currentUser == nil {
-            AuthView(authManager: authManager)
-        } else {
+        if authManager.currentUser != nil {
+            // We have a user — either from UserDefaults cache (fast path) or a
+            // confirmed session. Go straight to the app; restoreSession() will
+            // silently validate / refresh the token in the background.
             MainTabView(authManager: authManager)
+        } else if authManager.isRestoringSession {
+            // No cached user and session check is in-flight — show splash once.
+            startupSurface
+        } else {
+            // Restore finished and no valid session found.
+            AuthView(authManager: authManager)
         }
     }
 

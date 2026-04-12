@@ -91,15 +91,17 @@ final class FollowService: ObservableObject {
     }
 
     func followerCount(for userID: UUID) async -> Int {
-        struct CountRow: Codable { let count: Int }
+        // Select a minimal column and count the returned rows — avoids relying
+        // on PostgREST aggregate syntax that may not be enabled on all plans.
+        struct FollowRow: Codable { let follower_user_id: UUID }
         do {
-            let rows: [CountRow] = try await client
+            let rows: [FollowRow] = try await client
                 .from("follows")
-                .select("count", head: false)
+                .select("follower_user_id")
                 .eq("followed_user_id", value: userID.uuidString)
                 .execute()
                 .value
-            return rows.first?.count ?? 0
+            return rows.count
         } catch {
             print("[FollowService] followerCount 失败: \(error)")
             return 0

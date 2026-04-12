@@ -16,23 +16,42 @@ struct CommentsView: View {
     @FocusState private var inputFocused: Bool
 
     var body: some View {
-        NavigationStack {
-            ZStack(alignment: .bottom) {
-                Color(.systemGroupedBackground).ignoresSafeArea()
+        VStack(spacing: 0) {
+            // Title bar (no NavigationStack — sheet drag handles dismissal)
+            HStack {
+                Text("评论")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(PawPalTheme.primaryText)
+                Spacer()
+                Button {
+                    inputFocused = false
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(PawPalTheme.tertiaryText)
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
 
+            Divider()
+
+            ZStack(alignment: .bottom) {
                 if isLoading && comments.isEmpty {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding(.bottom, 80)
                 } else if comments.isEmpty {
                     VStack(spacing: 14) {
-                        Text("💬")
-                            .font(.system(size: 48))
+                        Text("💬").font(.system(size: 44))
                         Text("还没有评论")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
                             .foregroundStyle(PawPalTheme.primaryText)
                         Text("来发第一条吧！")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -42,8 +61,7 @@ struct CommentsView: View {
                         ScrollView {
                             LazyVStack(spacing: 0) {
                                 ForEach(comments) { comment in
-                                    commentRow(comment)
-                                        .id(comment.id)
+                                    commentRow(comment).id(comment.id)
                                     if comment.id != comments.last?.id {
                                         Divider().padding(.leading, 60)
                                     }
@@ -60,6 +78,7 @@ struct CommentsView: View {
                     }
                 }
 
+                // Error + input bar pinned to bottom
                 VStack(spacing: 0) {
                     if let errorMessage {
                         Text(errorMessage)
@@ -73,17 +92,13 @@ struct CommentsView: View {
                     inputBar
                 }
             }
-            .navigationTitle("评论")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
-                }
-            }
         }
-        .task {
-            await reloadComments()
-        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        // Partial sheet — starts at ~55 % and can be dragged to full screen
+        .presentationDetents([.fraction(0.55), .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(24)
+        .task { await reloadComments() }
     }
 
     // MARK: - Comment row

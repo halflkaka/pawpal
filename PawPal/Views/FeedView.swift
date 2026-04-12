@@ -3,11 +3,19 @@ import UIKit
 
 struct FeedView: View {
     @Bindable var authManager: AuthManager
+    /// Rotated by MainTabView whenever the user publishes a new post so that
+    /// FeedView knows to reload even though feedLoaded is already true.
+    var postPublishedID: UUID = UUID()
     @StateObject private var postsService  = PostsService()
     @StateObject private var followService = FollowService()
     @State private var commentingPost: RemotePost?
     @State private var pendingDeletePost: RemotePost?
     @State private var toastMessage: String?
+    /// Prevents redundant full reloads on every tab switch once feed is populated.
+    @State private var feedLoaded = false
+    /// Guards the onChange handler — suppresses the spurious refresh triggered
+    /// by the very first loadFollowing call during initial task setup.
+    @State private var initialLoadDone = false
 
     private var myID: UUID? { authManager.currentUser?.id }
 
@@ -21,12 +29,17 @@ struct FeedView: View {
             LazyVStack(alignment: .leading, spacing: 18) {
                 header
 
-                // Subtle nudge banner when user follows nobody yet
-                if hasLoadedFollows && !isFiltered {
+                // Subtle nudge banner when user follows nobody yet.
+                // Guard with feedLoaded so it doesn't flash above the skeleton
+                // before loadFollowing has even started.
+                if feedLoaded && hasLoadedFollows && !isFiltered {
                     followNudgeBanner
                 }
 
-                if postsService.isLoadingFeed && postsService.feedPosts.isEmpty {
+                if !feedLoaded || authManager.isRestoringSession || (postsService.isLoadingFeed && postsService.feedPosts.isEmpty) {
+                    // Show skeleton until the very first load completes — prevents
+                    // any flash of the empty-state during session restore or between
+                    // the restore finishing and isLoadingFeed becoming true.
                     feedSkeleton
                 } else if postsService.feedPosts.isEmpty {
                     emptyFeed
@@ -36,6 +49,7 @@ struct FeedView: View {
                             post: post,
                             currentUserID: myID,
                             commentCount: postsService.commentCount(for: post.id),
+                            commentPreviews: postsService.commentPreviews[post.id] ?? [],
                             isFollowingOwner: followService.isFollowing(post.owner_user_id),
                             isOwnPost: post.owner_user_id == myID,
                             onLike: {
@@ -61,14 +75,52 @@ struct FeedView: View {
         .toolbar(.hidden, for: .navigationBar)
         .refreshable { await refreshFeed() }
         .task {
+            // Don't attempt any network calls while the Supabase session is still
+            // being restored — authenticated requests would fail or return empty
+            // results under RLS. The onChange below takes over once it's ready.
+            guard !authManager.isRestoringSession else { return }
             if let uid = myID {
                 await followService.loadFollowing(for: uid)
             }
-            await refreshFeed()
+            // Only do a full reload if the feed hasn't been populated yet.
+            // On subsequent tab switches the in-memory feedPosts is still fresh.
+            if !feedLoaded {
+                await refreshFeed()
+                feedLoaded = true
+            }
+            initialLoadDone = true
         }
-        // Re-filter the feed whenever the following list changes
-        .onChange(of: followService.followingIDs) { _, _ in
+        // Kick off the initial load the moment session restoration completes.
+        .onChange(of: authManager.isRestoringSession) { _, isRestoring in
+            guard !isRestoring, !feedLoaded, let uid = myID else { return }
+            Task {
+                await followService.loadFollowing(for: uid)
+                await refreshFeed()
+                feedLoaded = true
+                initialLoadDone = true
+            }
+        }
+        // Re-filter the feed whenever the following set actually changes
+        // (e.g. user followed/unfollowed from ProfileView).
+        // Guard with initialLoadDone so the first-load onChange doesn't fire
+        // a second concurrent refreshFeed alongside the one in .task.
+        .onChange(of: followService.followingIDs) { oldVal, newVal in
+            guard initialLoadDone, newVal != oldVal else { return }
             Task { await refreshFeed() }
+        }
+        // When a new post is published from CreatePostView, reset and reload so
+        // the author's own new post appears without a manual pull-to-refresh.
+        .onChange(of: postPublishedID) { _, _ in
+            feedLoaded = false
+            initialLoadDone = false
+            Task {
+                if let uid = myID {
+                    await followService.loadFollowing(for: uid)
+                }
+                await refreshFeed()
+                feedLoaded = true
+                initialLoadDone = true
+            }
         }
         // Surface errors as a temporary toast
         .onChange(of: postsService.errorMessage) { _, msg in
@@ -253,6 +305,8 @@ struct PostCard: View {
     let post: RemotePost
     let currentUserID: UUID?
     let commentCount: Int
+    /// Last ≤2 comments fetched by PostsService — displayed inline below the card.
+    let commentPreviews: [RemoteComment]
     let isFollowingOwner: Bool
     let isOwnPost: Bool
     let onLike: () async -> Void
@@ -277,6 +331,9 @@ struct PostCard: View {
                 PawPalPill(text: mood, systemImage: "sparkles", tint: PawPalTheme.orangeSoft)
             }
             reactionRow
+            if commentCount > 0 || !commentPreviews.isEmpty {
+                commentPreviewSection
+            }
         }
         .pawPalCard()
     }
@@ -471,34 +528,62 @@ struct PostCard: View {
             }
             .buttonStyle(.plain)
 
-            // Comment button
+            // Comment button — shows count when comments exist
             Button(action: onComment) {
-                HStack(spacing: 5) {
-                    Image(systemName: "message")
-                    if commentCount > 0 {
-                        Text("\(commentCount)")
-                            .contentTransition(.numericText())
-                    } else {
-                        Text("评论")
-                    }
-                }
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(PawPalTheme.secondaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(PawPalTheme.background, in: Capsule())
+                reactionChip(icon: "message", label: commentCount > 0 ? "\(commentCount)" : "评论")
             }
             .buttonStyle(.plain)
 
-            Button {
-                onComment()
-            } label: {
+            Button(action: onComment) {
                 reactionChip(icon: "pawprint.fill", label: "贴贴")
             }
             .buttonStyle(.plain)
 
             Spacer()
         }
+    }
+
+    // MARK: - Comment Previews (Instagram / WeChat style)
+
+    private var commentPreviewSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // "查看全部 N 条评论" link — shown when there are more than the 2 we preview
+            if commentCount > commentPreviews.count {
+                Button(action: onComment) {
+                    Text("查看全部 \(commentCount) 条评论")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(PawPalTheme.secondaryText)
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Inline comment rows: bold author name + content on one line
+            ForEach(commentPreviews) { comment in
+                Button(action: onComment) {
+                    (Text(comment.authorName)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                    + Text("  \(comment.content)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(PawPalTheme.primaryText))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Subtle tap-to-comment prompt when there are no comments yet
+            if commentCount == 0 {
+                Button(action: onComment) {
+                    Text("添加评论…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(PawPalTheme.tertiaryText)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 2)
+        .padding(.horizontal, 2)
     }
 
     private func reactionChip(icon: String, label: String) -> some View {

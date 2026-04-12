@@ -10,6 +10,8 @@ final class PostsService: ObservableObject {
     @Published var isPosting = false
     @Published var errorMessage: String?
     @Published private(set) var commentCounts: [UUID: Int] = [:]
+    /// Last 2 comments per post — displayed inline on the feed card (Instagram style).
+    @Published private(set) var commentPreviews: [UUID: [RemoteComment]] = [:]
 
     private let client: SupabaseClient
     private let storageBucket = "post-images"
@@ -98,6 +100,7 @@ final class PostsService: ObservableObject {
                     (post.id, max(post.commentCount, commentCounts[post.id] ?? 0))
                 })
                 await refreshCommentCounts(for: mergedPosts.map(\.id))
+                await loadCommentPreviews(for: mergedPosts.map(\.id))
                 return
             } catch {
                 print("[PostsService] loadFeed select='\(select)' 失败: \(error)")
@@ -457,6 +460,11 @@ final class PostsService: ObservableObject {
         )
         bumpCommentStub(postID: postID, commentID: comment.id)
         incrementCommentCount(postID: postID)
+        // Keep inline preview up-to-date (max 2 most recent)
+        var previews = commentPreviews[postID, default: []]
+        previews.append(comment)
+        if previews.count > 2 { previews = Array(previews.suffix(2)) }
+        commentPreviews[postID] = previews
         return comment
     }
 
@@ -531,6 +539,66 @@ final class PostsService: ObservableObject {
             }
         } catch {
             print("[PostsService] refreshCommentCounts 批量查询失败: \(error)")
+        }
+    }
+
+    // MARK: - Comment Previews
+
+    /// Batch-fetches the two most-recent comments for each post and stores them
+    /// in commentPreviews so feed cards can show them inline without a tap.
+    func loadCommentPreviews(for postIDs: [UUID]) async {
+        guard !postIDs.isEmpty else { return }
+
+        struct CommentRow: Codable {
+            let id: UUID; let post_id: UUID; let user_id: UUID
+            let content: String; let created_at: Date
+        }
+        struct ProfileRow: Codable {
+            let id: UUID; let username: String?; let display_name: String?
+        }
+
+        do {
+            let rows: [CommentRow] = try await client
+                .from("comments")
+                .select("id, post_id, user_id, content, created_at")
+                .in("post_id", values: postIDs.map(\.uuidString))
+                .order("created_at", ascending: false)
+                .execute()
+                .value
+
+            // Keep only the 2 most recent per post (rows already sorted desc)
+            var grouped: [UUID: [CommentRow]] = [:]
+            for row in rows {
+                var arr = grouped[row.post_id, default: []]
+                if arr.count < 2 { arr.append(row); grouped[row.post_id] = arr }
+            }
+
+            // Batch-fetch author profiles
+            let authorIDs = Array(Set(rows.map { $0.user_id.uuidString }))
+            var profileMap: [UUID: ProfileRow] = [:]
+            if !authorIDs.isEmpty,
+               let profiles: [ProfileRow] = try? await client
+                .from("profiles")
+                .select("id, username, display_name")
+                .in("id", values: authorIDs)
+                .execute()
+                .value {
+                for p in profiles { profileMap[p.id] = p }
+            }
+
+            // Build preview objects in chronological order
+            for (postID, commentRows) in grouped {
+                commentPreviews[postID] = commentRows.reversed().map { row in
+                    let p = profileMap[row.user_id]
+                    return RemoteComment(
+                        id: row.id, post_id: row.post_id, user_id: row.user_id,
+                        content: row.content, created_at: row.created_at, profiles: nil,
+                        username: p?.username, display_name: p?.display_name
+                    )
+                }
+            }
+        } catch {
+            print("[PostsService] loadCommentPreviews 失败: \(error)")
         }
     }
 

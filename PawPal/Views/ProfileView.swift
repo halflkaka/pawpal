@@ -16,6 +16,10 @@ struct ProfileView: View {
     @State private var profileErrorMessage: String?
     @State private var statusMessage: String?
     @State private var followerCount = 0
+    @State private var isLoadingAll = false
+    @State private var viewingPost: RemotePost?
+    /// Called when the user taps "创建首条帖子" — switches to the Create tab.
+    var onCreatePost: (() -> Void)? = nil
     @StateObject private var followService = FollowService()
     @StateObject private var postsService = PostsService()
 
@@ -102,6 +106,17 @@ struct ProfileView: View {
             ) { username, displayName, bio in
                 await saveProfile(username: username, displayName: displayName, bio: bio)
             }
+        }
+        .sheet(item: $viewingPost) { post in
+            CommentsView(
+                postID: post.id,
+                currentUserID: user.id,
+                currentUserDisplayName: profile?.display_name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    ? profile!.display_name!
+                    : (user.displayName ?? user.email?.components(separatedBy: "@").first ?? "用户"),
+                currentUsername: profile?.username,
+                postsService: postsService
+            )
         }
         .alert("删除宠物？", isPresented: deleteAlertBinding, presenting: pendingDeletePet) { pet in
             Button("删除", role: .destructive) {
@@ -222,7 +237,7 @@ struct ProfileView: View {
             }
             .buttonStyle(.plain)
 
-            // Stats row
+            // Stats row — redacted while the first loadAll() is in flight
             HStack(spacing: 0) {
                 statCell(value: "\(postsService.userPosts.count)", label: "帖子")
                 statDivider()
@@ -234,6 +249,7 @@ struct ProfileView: View {
             }
             .padding(.vertical, 12)
             .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .redacted(reason: isLoadingAll ? .placeholder : [])
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
@@ -400,12 +416,32 @@ struct ProfileView: View {
 
             Divider()
 
-            if postsService.userPosts.isEmpty {
+            if isLoadingAll && postsService.userPosts.isEmpty {
+                postsLoadingSkeleton
+            } else if postsService.userPosts.isEmpty {
                 emptyPostsState
             } else {
                 realPostsGrid
             }
         }
+    }
+
+    // MARK: - Posts loading skeleton
+
+    private var postsLoadingSkeleton: some View {
+        LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+            spacing: 10
+        ) {
+            ForEach(0..<4, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(PawPalTheme.cardSoft)
+                    .frame(height: 200)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .redacted(reason: .placeholder)
     }
 
     // MARK: - Empty posts state
@@ -421,12 +457,17 @@ struct ProfileView: View {
                 .foregroundStyle(PawPalTheme.secondaryText)
                 .multilineTextAlignment(.center)
             VStack(spacing: 12) {
-                actionCard(
-                    icon: "square.and.pencil",
-                    title: "创建首条帖子",
-                    subtitle: "去发布页分享宠物的精彩时刻",
-                    color: PawPalTheme.orange
-                )
+                Button {
+                    onCreatePost?()
+                } label: {
+                    actionCard(
+                        icon: "square.and.pencil",
+                        title: "创建首条帖子",
+                        subtitle: "去发布页分享宠物的精彩时刻",
+                        color: PawPalTheme.orange
+                    )
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 40)
@@ -506,6 +547,8 @@ struct ProfileView: View {
         .padding(10)
         .background(Color.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .shadow(color: PawPalTheme.shadow, radius: 8, y: 4)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .onTapGesture { viewingPost = post }
     }
 
     private func profilePostPlaceholder(height: CGFloat, icon: String?) -> some View {
@@ -527,6 +570,8 @@ struct ProfileView: View {
     // MARK: - Helpers
 
     private func loadAll() async {
+        isLoadingAll = true
+        defer { isLoadingAll = false }
         async let profileTask: () = loadProfile()
         async let petsTask: () = petsService.loadPets(for: user.id)
         async let followsTask: () = followService.loadFollowing(for: user.id)

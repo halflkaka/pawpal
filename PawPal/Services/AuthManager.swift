@@ -16,9 +16,19 @@ final class AuthManager {
 
     init(authService: AuthService = SupabaseAuthService()) {
         self.authService = authService
-        // Start true so ContentView shows the launch screen on first render
-        // instead of briefly flashing AuthView before restoreSession() runs.
         isRestoringSession = true
+
+        // Pre-populate currentUser from cache so the app goes straight to
+        // MainTabView on subsequent launches without flashing the auth screen.
+        if let idStr = UserDefaults.standard.string(forKey: "pawpal.cachedUserID"),
+           let id   = UUID(uuidString: idStr) {
+            let email = UserDefaults.standard.string(forKey: "pawpal.cachedUserEmail")
+            currentUser = AppUser(
+                id: id,
+                email: email,
+                displayName: email?.components(separatedBy: "@").first
+            )
+        }
     }
 
     func restoreSession() async {
@@ -26,7 +36,18 @@ final class AuthManager {
         errorMessage = nil
         defer { isRestoringSession = false }
 
-        currentUser = try? await authService.restoreSession()
+        let restored = try? await authService.restoreSession()
+        currentUser = restored
+
+        // Keep cache in sync
+        if let user = restored {
+            UserDefaults.standard.set(user.id.uuidString, forKey: "pawpal.cachedUserID")
+            UserDefaults.standard.set(user.email,         forKey: "pawpal.cachedUserEmail")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "pawpal.cachedUserID")
+            UserDefaults.standard.removeObject(forKey: "pawpal.cachedUserEmail")
+        }
+
         await loadCurrentProfileIfNeeded()
     }
 
@@ -77,6 +98,8 @@ final class AuthManager {
                 await MainActor.run {
                     currentUser = nil
                     currentProfile = nil
+                    UserDefaults.standard.removeObject(forKey: "pawpal.cachedUserID")
+                    UserDefaults.standard.removeObject(forKey: "pawpal.cachedUserEmail")
                 }
             } catch {
                 await MainActor.run {
