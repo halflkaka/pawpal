@@ -143,6 +143,7 @@ See `docs/guides/qa-and-testing.md` for the full QA process.
 | `docs/testing.md` | How to validate changes |
 | `docs/database.md` | Schema design and table guide |
 | `docs/pr-template.md` | PR description standard |
+| `docs/decisions.md` | Architectural and product decisions and their reasoning |
 | `docs/scope.md` | What is in scope, deferred, and off-limits |
 | `docs/known-issues.md` | Known bugs, gaps, and tech debt |
 

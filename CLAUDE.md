@@ -50,7 +50,8 @@ After every PR is merged, add an entry to `CHANGELOG.md` at the repo root.
 Before proposing or starting any change:
 1. Check `ROADMAP.md` for current phase and direction
 2. Check `docs/scope.md` for what is deferred — do not invest in those areas
-3. Check `docs/known-issues.md` for existing problems that may be relevant
+3. Check `docs/decisions.md` for architectural decisions that must not be undone
+4. Check `docs/known-issues.md` for existing problems that may be relevant
 
 ## Do Not Break
 
@@ -89,6 +90,7 @@ CLAUDE.md                           ← you are here
 └── agents/                         ← agent team role configs
 docs/
 ├── database.md                     ← schema design and table guide
+├── decisions.md                    ← architectural and product decisions and their reasoning
 ├── known-issues.md                 ← known bugs, gaps, and tech debt
 ├── pr-template.md                  ← PR description standard
 ├── scope.md                        ← what is in scope, deferred, and off-limits
