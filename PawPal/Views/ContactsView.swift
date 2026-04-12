@@ -1,9 +1,41 @@
 import SwiftUI
 
 struct ContactsView: View {
-    @State private var selectedFilter = "全部"
+    @StateObject private var postsService = PostsService()
+    @State private var selectedFilter = DiscoverFilter.all
+    @State private var searchText = ""
 
-    private let filters = ["全部", "狗狗", "猫咪", "兔兔", "鸟类"]
+    private var filteredPosts: [RemotePost] {
+        postsService.feedPosts.filter { post in
+            matchesFilter(post) && matchesSearch(post)
+        }
+    }
+
+    private var featuredPosts: [RemotePost] {
+        Array(filteredPosts.prefix(8))
+    }
+
+    private var trendingTopics: [DiscoverTopic] {
+        let grouped = Dictionary(grouping: filteredPosts) { normalizedMood($0.mood) }
+
+        return grouped
+            .compactMap { mood, posts in
+                guard let mood else { return nil }
+                return DiscoverTopic(
+                    title: "#\(mood)",
+                    count: posts.count,
+                    emoji: emoji(for: mood)
+                )
+            }
+            .sorted {
+                if $0.count == $1.count {
+                    return $0.title < $1.title
+                }
+                return $0.count > $1.count
+            }
+            .prefix(6)
+            .map { $0 }
+    }
 
     var body: some View {
         ScrollView {
@@ -11,8 +43,16 @@ struct ContactsView: View {
                 header
                 searchBar
                 filterRow
-                spotsGrid
-                trendsSection
+
+                if postsService.isLoadingFeed && postsService.feedPosts.isEmpty {
+                    loadingState
+                } else if filteredPosts.isEmpty {
+                    emptyState
+                } else {
+                    featuredSection
+                    trendsSection
+                    latestSection
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
@@ -23,6 +63,14 @@ struct ContactsView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
+        .refreshable {
+            await postsService.loadFeed()
+        }
+        .task {
+            if postsService.feedPosts.isEmpty {
+                await postsService.loadFeed()
+            }
+        }
     }
 
     private var header: some View {
@@ -30,7 +78,7 @@ struct ContactsView: View {
             Text("发现 🔭")
                 .font(.system(size: 30, weight: .bold, design: .rounded))
                 .foregroundStyle(PawPalTheme.primaryText)
-            Text("发现宠物、地点和超有人气的小明星")
+            Text("搜索真实宠物动态，看看现在大家都在晒什么")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.secondary)
         }
@@ -39,11 +87,22 @@ struct ContactsView: View {
     private var searchBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-            Text("搜索宠物、话题、地点…")
-            Spacer()
+                .foregroundStyle(.secondary)
+            TextField("搜索宠物名、文案、城市、心情…", text: $searchText)
+                .font(.system(size: 14, weight: .semibold))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .font(.system(size: 14, weight: .semibold))
-        .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -53,11 +112,11 @@ struct ContactsView: View {
     private var filterRow: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
-                ForEach(filters, id: \.self) { filter in
+                ForEach(DiscoverFilter.allCases, id: \.self) { filter in
                     Button {
                         selectedFilter = filter
                     } label: {
-                        Text(filter)
+                        Text(filter.title)
                             .font(.system(size: 13, weight: .bold, design: .rounded))
                             .foregroundStyle(selectedFilter == filter ? .white : PawPalTheme.secondaryText)
                             .padding(.horizontal, 14)
@@ -71,34 +130,19 @@ struct ContactsView: View {
         .scrollIndicators(.hidden)
     }
 
-    private var spotsGrid: some View {
+    private var featuredSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PawPalSectionTitle(title: "热门地点", emoji: "✨")
+            PawPalSectionTitle(title: searchText.isEmpty ? "宠物推荐" : "搜索结果", emoji: "✨")
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                ForEach(exploreCards) { card in
-                    VStack(alignment: .leading, spacing: 0) {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(card.background)
-                            .frame(height: 94)
-                            .overlay {
-                                Text(card.emoji)
-                                    .font(.system(size: 44))
-                            }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(card.name)
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
-                                .foregroundStyle(PawPalTheme.primaryText)
-                            Text(card.meta)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(10)
+            ScrollView(.horizontal) {
+                HStack(spacing: 12) {
+                    ForEach(featuredPosts, id: \.id) { post in
+                        DiscoverPetCard(post: post)
                     }
-                    .pawPalCard(padding: 0)
                 }
+                .padding(.vertical, 2)
             }
+            .scrollIndicators(.hidden)
         }
     }
 
@@ -106,58 +150,321 @@ struct ContactsView: View {
         VStack(alignment: .leading, spacing: 10) {
             PawPalSectionTitle(title: "热门话题", emoji: "🔥")
 
-            ForEach(Array(trending.enumerated()), id: \.element.id) { index, trend in
-                HStack(spacing: 12) {
-                    Text("\(index + 1)")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundStyle(PawPalTheme.orangeSoft)
-                        .frame(width: 28)
+            if trendingTopics.isEmpty {
+                Text("发几条带心情标签的动态，这里就会热闹起来。")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            } else {
+                ForEach(Array(trendingTopics.enumerated()), id: \.element.id) { index, topic in
+                    HStack(spacing: 12) {
+                        Text("\(index + 1)")
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .foregroundStyle(PawPalTheme.orangeSoft)
+                            .frame(width: 28)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(trend.tag)
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .foregroundStyle(PawPalTheme.primaryText)
-                        Text(trend.count)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(topic.title)
+                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                                .foregroundStyle(PawPalTheme.primaryText)
+                            Text("\(topic.count) 条动态")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Text(topic.emoji)
+                            .font(.system(size: 22))
                     }
-
-                    Spacer()
-
-                    Text(trend.emoji)
-                        .font(.system(size: 22))
+                    .pawPalCard()
                 }
-                .pawPalCard()
             }
+        }
+    }
+
+    private var latestSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PawPalSectionTitle(title: "最新动态", emoji: "🫶")
+
+            ForEach(filteredPosts.prefix(12), id: \.id) { post in
+                DiscoverPostRow(post: post)
+            }
+        }
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: 12) {
+            ForEach(0..<3, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(PawPalTheme.cardSoft)
+                    .frame(height: 110)
+                    .redacted(reason: .placeholder)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Text("🐾")
+                .font(.system(size: 48))
+            Text(searchText.isEmpty ? "还没有可发现的动态" : "没有找到匹配结果")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.primaryText)
+            Text(searchText.isEmpty ? "等大家发帖后，这里会自动变成真实的发现页。" : "试试搜宠物名、城市，或者切换一个分类。")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 50)
+    }
+
+    private func matchesFilter(_ post: RemotePost) -> Bool {
+        switch selectedFilter {
+        case .all:
+            return true
+        case .dogs:
+            return normalizedSpecies(post.pet?.species) == "dog"
+        case .cats:
+            return normalizedSpecies(post.pet?.species) == "cat"
+        case .rabbits:
+            return ["rabbit", "bunny"].contains(normalizedSpecies(post.pet?.species))
+        case .birds:
+            return normalizedSpecies(post.pet?.species) == "bird"
+        }
+    }
+
+    private func matchesSearch(_ post: RemotePost) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return true }
+
+        let fields = [
+            post.pet?.name,
+            post.pet?.species,
+            post.pet?.breed,
+            post.pet?.home_city,
+            post.caption,
+            post.mood
+        ]
+        .compactMap { $0?.lowercased() }
+
+        return fields.contains { $0.contains(query) }
+    }
+
+    private func normalizedSpecies(_ species: String?) -> String {
+        species?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    }
+
+    private func normalizedMood(_ mood: String?) -> String? {
+        guard let mood else { return nil }
+        let trimmed = mood.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func emoji(for mood: String) -> String {
+        let value = mood.lowercased()
+        if value.contains("开心") || value.contains("happy") || value.contains("joy") { return "😄" }
+        if value.contains("困") || value.contains("sleep") || value.contains("nap") { return "😴" }
+        if value.contains("疯") || value.contains("play") || value.contains("run") { return "🌀" }
+        if value.contains("吃") || value.contains("snack") || value.contains("treat") { return "🍖" }
+        return "🐾"
+    }
+}
+
+private enum DiscoverFilter: CaseIterable {
+    case all
+    case dogs
+    case cats
+    case rabbits
+    case birds
+
+    var title: String {
+        switch self {
+        case .all: return "全部"
+        case .dogs: return "狗狗"
+        case .cats: return "猫咪"
+        case .rabbits: return "兔兔"
+        case .birds: return "鸟类"
         }
     }
 }
 
-private struct ExploreCard: Identifiable {
-    let id = UUID()
-    let emoji: String
-    let background: LinearGradient
-    let name: String
-    let meta: String
+private struct DiscoverPetCard: View {
+    let post: RemotePost
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(cardGradient)
+                    .frame(width: 190, height: 148)
+
+                if let url = post.imageURLs.first {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 190, height: 148)
+                                .clipped()
+                        default:
+                            Text(speciesEmoji)
+                                .font(.system(size: 54))
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                } else {
+                    Text(speciesEmoji)
+                        .font(.system(size: 54))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(post.pet?.name ?? "未知宠物")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(PawPalTheme.primaryText)
+                    .lineLimit(1)
+
+                Text(metaText)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                HStack(spacing: 10) {
+                    Label("\(post.likeCount)", systemImage: "heart.fill")
+                    Label("\(post.commentCount)", systemImage: "message.fill")
+                }
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.orange)
+            }
+        }
+        .frame(width: 190, alignment: .leading)
+        .pawPalCard()
+    }
+
+    private var speciesEmoji: String {
+        switch post.pet?.species?.lowercased() {
+        case "dog": return "🐶"
+        case "cat": return "🐱"
+        case "rabbit", "bunny": return "🐰"
+        case "bird": return "🦜"
+        default: return "🐾"
+        }
+    }
+
+    private var metaText: String {
+        let pieces = [post.pet?.species, post.pet?.home_city, post.mood]
+            .compactMap { value -> String? in
+                guard let value else { return nil }
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+        return pieces.isEmpty ? post.caption : pieces.joined(separator: " · ")
+    }
+
+    private var cardGradient: LinearGradient {
+        LinearGradient(
+            colors: [PawPalTheme.orange.opacity(0.35), PawPalTheme.cardSoft],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 }
 
-private struct TrendItem: Identifiable {
-    let id = UUID()
-    let tag: String
-    let count: String
-    let emoji: String
+private struct DiscoverPostRow: View {
+    let post: RemotePost
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(PawPalTheme.cardSoft)
+                    .frame(width: 54, height: 54)
+                Text(speciesEmoji)
+                    .font(.system(size: 28))
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text(post.pet?.name ?? "未知宠物")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                    if let mood = trimmed(post.mood) {
+                        Text("#\(mood)")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(PawPalTheme.orange)
+                    }
+                }
+
+                Text(post.caption)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(PawPalTheme.secondaryText)
+                    .lineLimit(2)
+
+                Text(footerText)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            if let url = post.imageURLs.first {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 64, height: 64)
+                            .clipped()
+                    default:
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(PawPalTheme.cardSoft)
+                            .frame(width: 64, height: 64)
+                            .overlay {
+                                Image(systemName: "photo")
+                                    .foregroundStyle(PawPalTheme.tertiaryText)
+                            }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+        }
+        .pawPalCard()
+    }
+
+    private var speciesEmoji: String {
+        switch post.pet?.species?.lowercased() {
+        case "dog": return "🐶"
+        case "cat": return "🐱"
+        case "rabbit", "bunny": return "🐰"
+        case "bird": return "🦜"
+        default: return "🐾"
+        }
+    }
+
+    private var footerText: String {
+        let city = trimmed(post.pet?.home_city)
+        let species = trimmed(post.pet?.species)
+        let pieces = [city, species, "❤️ \(post.likeCount)", "💬 \(post.commentCount)"]
+            .compactMap { $0 }
+        return pieces.joined(separator: " · ")
+    }
+
+    private func trimmed(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.isEmpty ? nil : result
+    }
 }
 
-private let exploreCards: [ExploreCard] = [
-    .init(emoji: "🐕", background: LinearGradient(colors: [Color(red: 1.0, green: 0.88, blue: 0.70), Color(red: 1.0, green: 0.80, blue: 0.50)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "金色时刻", meta: "金毛 · 4.2K 帖子"),
-    .init(emoji: "🐈", background: LinearGradient(colors: [Color(red: 0.72, green: 0.87, blue: 0.94), Color(red: 0.83, green: 0.72, blue: 0.94)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "猫猫午睡", meta: "猫咪 · 8.1K 帖子"),
-    .init(emoji: "🐇", background: LinearGradient(colors: [Color(red: 0.83, green: 0.94, blue: 0.72), Color(red: 0.72, green: 0.94, blue: 0.83)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "兔兔蹦跳", meta: "兔兔 · 2.3K 帖子"),
-    .init(emoji: "🦜", background: LinearGradient(colors: [Color(red: 0.94, green: 0.83, blue: 0.72), Color(red: 0.94, green: 0.72, blue: 0.72)], startPoint: .topLeading, endPoint: .bottomTrailing), name: "鹦鹉开麦", meta: "鸟类 · 1.8K 帖子")
-]
-
-private let trending: [TrendItem] = [
-    .init(tag: "#疯跑时间", count: "12.4K 帖子", emoji: "🌀"),
-    .init(tag: "#湿鼻子星期三", count: "8.1K 帖子", emoji: "💧"),
-    .init(tag: "#午睡小分队", count: "6.7K 帖子", emoji: "😴"),
-    .init(tag: "#碰鼻子", count: "4.2K 帖子", emoji: "👃")
-]
+private struct DiscoverTopic: Identifiable {
+    let id = UUID()
+    let title: String
+    let count: Int
+    let emoji: String
+}
