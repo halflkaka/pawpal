@@ -340,6 +340,11 @@ struct CreatePostView: View {
                     Text("发布成功，正在带你回首页")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(PawPalTheme.orange)
+                } else if let errorMsg = postsService.errorMessage {
+                    Text(errorMsg)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
                 } else if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text("先写点内容才能发布")
                         .font(.system(size: 12, weight: .semibold))
