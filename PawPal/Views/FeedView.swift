@@ -313,16 +313,13 @@ struct PostCard: View {
             Spacer()
 
             if isOwnPost {
-                Menu {
-                    Button(role: .destructive, action: onDelete) {
-                        Label("删除动态", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(PawPalTheme.secondaryText)
-                        .frame(width: 32, height: 32)
-                        .background(PawPalTheme.cardSoft, in: Circle())
+                Button(action: onDelete) {
+                    Label("删除", systemImage: "trash")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.red)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.red.opacity(0.08), in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
