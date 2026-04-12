@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var authManager = AuthManager()
     @State private var showRestoreOverlay = false
+    @State private var didFinishInitialRestore = false
 
     var body: some View {
         ZStack {
@@ -17,6 +18,7 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.18), value: showRestoreOverlay)
         .task {
             await authManager.restoreSession()
+            didFinishInitialRestore = true
         }
         .task(id: authManager.isRestoringSession) {
             if authManager.isRestoringSession {
@@ -32,11 +34,18 @@ struct ContentView: View {
 
     @ViewBuilder
     private var rootContent: some View {
-        if authManager.currentUser == nil {
+        if !didFinishInitialRestore {
+            startupPlaceholder
+        } else if authManager.currentUser == nil {
             AuthView(authManager: authManager)
         } else {
             MainTabView(authManager: authManager)
         }
+    }
+
+    private var startupPlaceholder: some View {
+        PawPalBackground()
+            .ignoresSafeArea()
     }
 
     private var restoreOverlay: some View {
