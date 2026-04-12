@@ -36,6 +36,8 @@ final class PostsService: ObservableObject {
         errorMessage = nil
         defer { isLoadingFeed = false }
 
+        let currentUserID = try? await client.auth.session.user.id
+
         // Snapshot current in-memory likes so we can restore optimistic state
         // for posts where the server returns an empty likes array (e.g. when
         // the likes table exists but the join level doesn't include it).
@@ -58,20 +60,25 @@ final class PostsService: ObservableObject {
                     .execute()
                     .value
 
-                // Restore optimistic like state: if the server returned an empty
-                // likes array for a post we already have likes for locally,
-                // keep the local version until the next full successful join.
+                // Restore optimistic like state only for the currently signed-in
+                // user. This avoids cross-run stale like badges while still
+                // protecting against partial join results.
                 for i in posts.indices {
-                    if posts[i].likes.isEmpty, let prev = previousLikes[posts[i].id], !prev.isEmpty {
-                        posts[i].likes = prev
+                    if posts[i].likes.isEmpty,
+                       let currentUserID,
+                       let prev = previousLikes[posts[i].id],
+                       prev.contains(where: { $0.user_id == currentUserID }) {
+                        posts[i].likes = [RemoteLike(user_id: currentUserID)]
                     }
                 }
 
                 let mergedPosts = posts.map { post -> RemotePost in
                     var merged = post
                     if let previous = feedPosts.first(where: { $0.id == post.id }) {
-                        if merged.likes.isEmpty, !previous.likes.isEmpty {
-                            merged.likes = previous.likes
+                        if merged.likes.isEmpty,
+                           let currentUserID,
+                           previous.likes.contains(where: { $0.user_id == currentUserID }) {
+                            merged.likes = [RemoteLike(user_id: currentUserID)]
                         }
                         if merged.comments.isEmpty, let knownCount = commentCounts[post.id], knownCount > 0 {
                             merged.comments = Array(repeating: RemoteCommentStub(id: UUID()), count: knownCount)
@@ -97,6 +104,8 @@ final class PostsService: ObservableObject {
     // MARK: - Load User Posts (for profile grid)
 
     func loadUserPosts(for userID: UUID) async {
+        let currentUserID = try? await client.auth.session.user.id
+
         for select in Self.selectLevels {
             do {
                 let posts: [RemotePost] = try await client
@@ -109,8 +118,10 @@ final class PostsService: ObservableObject {
                 let mergedPosts = posts.map { post -> RemotePost in
                     var merged = post
                     if let previous = userPosts.first(where: { $0.id == post.id }) {
-                        if merged.likes.isEmpty, !previous.likes.isEmpty {
-                            merged.likes = previous.likes
+                        if merged.likes.isEmpty,
+                           let currentUserID,
+                           previous.likes.contains(where: { $0.user_id == currentUserID }) {
+                            merged.likes = [RemoteLike(user_id: currentUserID)]
                         }
                         if merged.comments.isEmpty, let knownCount = commentCounts[post.id], knownCount > 0 {
                             merged.comments = Array(repeating: RemoteCommentStub(id: UUID()), count: knownCount)
@@ -212,6 +223,7 @@ final class PostsService: ObservableObject {
     // MARK: - Delete Post
 
     func deletePost(_ postID: UUID, userID: UUID) async {
+        errorMessage = nil
         do {
             try await client
                 .from("posts")
@@ -221,6 +233,7 @@ final class PostsService: ObservableObject {
                 .execute()
             feedPosts.removeAll { $0.id == postID }
             userPosts.removeAll { $0.id == postID }
+            commentCounts[postID] = nil
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -327,7 +340,7 @@ final class PostsService: ObservableObject {
         let profiles: [ProfileRow] = (try? await client
             .from("profiles")
             .select("id, username, display_name")
-            .in("id", value: authorIDs)
+            .in("id", values: authorIDs)
             .execute()
             .value) ?? []
         let profileMap = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
@@ -471,7 +484,7 @@ final class PostsService: ObservableObject {
             let rows: [CommentCountRow] = try await client
                 .from("posts")
                 .select(Self.commentOnlySelect)
-                .in("id", value: postIDs.map(\.uuidString))
+                .in("id", values: postIDs.map(\.uuidString))
                 .execute()
                 .value
 

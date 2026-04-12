@@ -6,8 +6,8 @@ struct FeedView: View {
     @StateObject private var postsService  = PostsService()
     @StateObject private var followService = FollowService()
     @State private var commentingPost: RemotePost?
+    @State private var pendingDeletePost: RemotePost?
     @State private var toastMessage: String?
-    @State private var showingFeedInfo = false
 
     private var myID: UUID? { authManager.currentUser?.id }
 
@@ -44,7 +44,8 @@ struct FeedView: View {
                                 }
                             },
                             onComment: { commentingPost = post },
-                            onFollow: { await followService.toggleFollow(targetID: post.owner_user_id) }
+                            onFollow: { await followService.toggleFollow(targetID: post.owner_user_id) },
+                            onDelete: { pendingDeletePost = post }
                         )
                     }
                 }
@@ -91,6 +92,20 @@ struct FeedView: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
+        .alert("删除这条动态？", isPresented: deletePostAlertBinding, presenting: pendingDeletePost) { post in
+            Button("删除", role: .destructive) {
+                Task {
+                    guard let myID else { return }
+                    await postsService.deletePost(post.id, userID: myID)
+                    if postsService.errorMessage == nil {
+                        showToast("已删除动态")
+                    }
+                }
+            }
+            Button("取消", role: .cancel) { pendingDeletePost = nil }
+        } message: { _ in
+            Text("删除后将无法恢复。")
+        }
         .sheet(item: $commentingPost) { post in
             CommentsView(
                 postID: post.id,
@@ -113,6 +128,13 @@ struct FeedView: View {
             postsService.errorMessage = nil
             followService.errorMessage = nil
         }
+    }
+
+    private var deletePostAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeletePost != nil },
+            set: { if !$0 { pendingDeletePost = nil } }
+        )
     }
 
     private func refreshFeed() async {
@@ -236,6 +258,7 @@ struct PostCard: View {
     let onLike: () async -> Void
     let onComment: () -> Void
     let onFollow: () async -> Void
+    let onDelete: () -> Void
 
     @State private var likeAnimating = false
     @State private var followAnimating = false
@@ -288,6 +311,21 @@ struct PostCard: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+
+            if isOwnPost {
+                Menu {
+                    Button(role: .destructive, action: onDelete) {
+                        Label("删除动态", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(PawPalTheme.secondaryText)
+                        .frame(width: 32, height: 32)
+                        .background(PawPalTheme.cardSoft, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
 
             // Follow button — only visible on other people's posts
             if !isOwnPost {
