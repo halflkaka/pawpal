@@ -45,9 +45,32 @@ After every PR is merged, add an entry to `CHANGELOG.md` at the repo root.
 - Add a header: `## YYYY-MM-DD — PR title ([#N](url))`
 - Entries go at the top, in reverse chronological order
 
+## Before Starting Work
+
+Before proposing or starting any change:
+1. Check `ROADMAP.md` for current phase and direction
+2. Check `docs/scope.md` for what is deferred — do not invest in those areas
+3. Check `docs/known-issues.md` for existing problems that may be relevant
+
+## Do Not Break
+
+These flows must work after every change. Verify manually in the simulator if they could be affected:
+
+- **Auth** — sign in and registration complete without errors
+- **Feed** — loads posts, images render, like and comment counts are correct
+- **Create post** — pet selection, caption, image upload, and submission all work
+- **Profile** — pet cards display, post grid loads, follow counts are correct
+
 ## Agent Workflows
 
-When running multi-agent tasks (PM → designer → dev → QA), use the configs in `.claude/agents/`. These define roles, responsibilities, and handoff structure for each agent type.
+For larger changes or changes spanning multiple concerns (performance + UI, new feature + tests, etc.), proactively spin up an agent team rather than working sequentially. A typical team:
+
+- **PM** — reads the codebase, understands the problem, produces a direction doc with specific files and priorities
+- **Designer** — translates PM direction into exact SwiftUI specs (colors, modifiers, animation params)
+- **Dev(s)** — implement in parallel when concerns are independent (e.g. one dev on services, one on views)
+- **QA** — runs build, tests, and spot checks after dev work; reports results
+
+Use the configs in `.claude/agents/dev-team.md` for role definitions and handoff order. Default to agent teams for anything touching 3+ files or 2+ concerns.
 
 ## Code Conventions
 
@@ -66,7 +89,9 @@ CLAUDE.md                           ← you are here
 └── agents/                         ← agent team role configs
 docs/
 ├── database.md                     ← schema design and table guide
+├── known-issues.md                 ← known bugs, gaps, and tech debt
 ├── pr-template.md                  ← PR description standard
+├── scope.md                        ← what is in scope, deferred, and off-limits
 ├── testing.md                      ← QA process and test commands
 └── sessions/                       ← dated working docs from agent sessions
 ```
