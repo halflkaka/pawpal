@@ -25,6 +25,11 @@ final class PostsService: ObservableObject {
     ]
     private static let commentOnlySelect = "id, comments(id)"
 
+    private struct LikeRow: Codable {
+        let post_id: UUID
+        let user_id: UUID
+    }
+
     init() {
         client = SupabaseConfig.client
     }
@@ -35,6 +40,8 @@ final class PostsService: ObservableObject {
         isLoadingFeed = true
         errorMessage = nil
         defer { isLoadingFeed = false }
+
+        let currentUserID = try? await client.auth.session.user.id
 
         // Snapshot current in-memory likes so we can restore optimistic state
         // for posts where the server returns an empty likes array (e.g. when
@@ -58,20 +65,25 @@ final class PostsService: ObservableObject {
                     .execute()
                     .value
 
-                // Restore optimistic like state: if the server returned an empty
-                // likes array for a post we already have likes for locally,
-                // keep the local version until the next full successful join.
+                // Restore optimistic like state only for the currently signed-in
+                // user. This avoids cross-run stale like badges while still
+                // protecting against partial join results.
                 for i in posts.indices {
-                    if posts[i].likes.isEmpty, let prev = previousLikes[posts[i].id], !prev.isEmpty {
-                        posts[i].likes = prev
+                    if posts[i].likes.isEmpty,
+                       let currentUserID,
+                       let prev = previousLikes[posts[i].id],
+                       prev.contains(where: { $0.user_id == currentUserID }) {
+                        posts[i].likes = [RemoteLike(user_id: currentUserID)]
                     }
                 }
 
                 let mergedPosts = posts.map { post -> RemotePost in
                     var merged = post
                     if let previous = feedPosts.first(where: { $0.id == post.id }) {
-                        if merged.likes.isEmpty, !previous.likes.isEmpty {
-                            merged.likes = previous.likes
+                        if merged.likes.isEmpty,
+                           let currentUserID,
+                           previous.likes.contains(where: { $0.user_id == currentUserID }) {
+                            merged.likes = [RemoteLike(user_id: currentUserID)]
                         }
                         if merged.comments.isEmpty, let knownCount = commentCounts[post.id], knownCount > 0 {
                             merged.comments = Array(repeating: RemoteCommentStub(id: UUID()), count: knownCount)
@@ -81,6 +93,7 @@ final class PostsService: ObservableObject {
                 }
 
                 feedPosts = mergedPosts
+                await refreshLikes(for: mergedPosts.map(\.id))
                 commentCounts = Dictionary(uniqueKeysWithValues: mergedPosts.map { post in
                     (post.id, max(post.commentCount, commentCounts[post.id] ?? 0))
                 })
@@ -97,6 +110,8 @@ final class PostsService: ObservableObject {
     // MARK: - Load User Posts (for profile grid)
 
     func loadUserPosts(for userID: UUID) async {
+        let currentUserID = try? await client.auth.session.user.id
+
         for select in Self.selectLevels {
             do {
                 let posts: [RemotePost] = try await client
@@ -109,8 +124,10 @@ final class PostsService: ObservableObject {
                 let mergedPosts = posts.map { post -> RemotePost in
                     var merged = post
                     if let previous = userPosts.first(where: { $0.id == post.id }) {
-                        if merged.likes.isEmpty, !previous.likes.isEmpty {
-                            merged.likes = previous.likes
+                        if merged.likes.isEmpty,
+                           let currentUserID,
+                           previous.likes.contains(where: { $0.user_id == currentUserID }) {
+                            merged.likes = [RemoteLike(user_id: currentUserID)]
                         }
                         if merged.comments.isEmpty, let knownCount = commentCounts[post.id], knownCount > 0 {
                             merged.comments = Array(repeating: RemoteCommentStub(id: UUID()), count: knownCount)
@@ -120,6 +137,7 @@ final class PostsService: ObservableObject {
                 }
 
                 userPosts = mergedPosts
+                await refreshLikes(for: mergedPosts.map(\.id))
                 for post in mergedPosts {
                     commentCounts[post.id] = max(post.commentCount, commentCounts[post.id] ?? 0)
                 }
@@ -212,6 +230,7 @@ final class PostsService: ObservableObject {
     // MARK: - Delete Post
 
     func deletePost(_ postID: UUID, userID: UUID) async {
+        errorMessage = nil
         do {
             try await client
                 .from("posts")
@@ -221,6 +240,7 @@ final class PostsService: ObservableObject {
                 .execute()
             feedPosts.removeAll { $0.id == postID }
             userPosts.removeAll { $0.id == postID }
+            commentCounts[postID] = nil
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -276,18 +296,48 @@ final class PostsService: ObservableObject {
         await syncLikes(for: postID)
     }
 
-    /// Fetches the real like list for one post and updates feedPosts in place.
+    /// Fetches the real like list for one post and updates feed/user posts in place.
     private func syncLikes(for postID: UUID) async {
-        struct LikeRow: Codable { let user_id: UUID }
         guard let likes = try? await client
             .from("likes")
             .select("user_id")
             .eq("post_id", value: postID.uuidString)
             .execute()
-            .value as [LikeRow],
-              let index = feedPosts.firstIndex(where: { $0.id == postID })
+            .value as [RemoteLike]
         else { return }
-        feedPosts[index].likes = likes.map { RemoteLike(user_id: $0.user_id) }
+
+        if let index = feedPosts.firstIndex(where: { $0.id == postID }) {
+            feedPosts[index].likes = likes
+        }
+        if let index = userPosts.firstIndex(where: { $0.id == postID }) {
+            userPosts[index].likes = likes
+        }
+    }
+
+    private func refreshLikes(for postIDs: [UUID]) async {
+        guard !postIDs.isEmpty else { return }
+
+        do {
+            let rows: [LikeRow] = try await client
+                .from("likes")
+                .select("post_id, user_id")
+                .in("post_id", values: postIDs.map(\.uuidString))
+                .execute()
+                .value
+
+            let grouped = Dictionary(grouping: rows, by: \.post_id)
+            for postID in postIDs {
+                let likes = (grouped[postID] ?? []).map { RemoteLike(user_id: $0.user_id) }
+                if let index = feedPosts.firstIndex(where: { $0.id == postID }) {
+                    feedPosts[index].likes = likes
+                }
+                if let index = userPosts.firstIndex(where: { $0.id == postID }) {
+                    userPosts[index].likes = likes
+                }
+            }
+        } catch {
+            print("[PostsService] refreshLikes 批量查询失败: \(error)")
+        }
     }
 
     // MARK: - Comments
@@ -327,7 +377,7 @@ final class PostsService: ObservableObject {
         let profiles: [ProfileRow] = (try? await client
             .from("profiles")
             .select("id, username, display_name")
-            .in("id", value: authorIDs)
+            .in("id", values: authorIDs)
             .execute()
             .value) ?? []
         let profileMap = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
@@ -471,7 +521,7 @@ final class PostsService: ObservableObject {
             let rows: [CommentCountRow] = try await client
                 .from("posts")
                 .select(Self.commentOnlySelect)
-                .in("id", value: postIDs.map(\.uuidString))
+                .in("id", values: postIDs.map(\.uuidString))
                 .execute()
                 .value
 

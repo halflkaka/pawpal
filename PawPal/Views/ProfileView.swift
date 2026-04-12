@@ -15,7 +15,9 @@ struct ProfileView: View {
     @State private var isLoadingProfile = false
     @State private var profileErrorMessage: String?
     @State private var statusMessage: String?
+    @State private var followerCount = 0
     @StateObject private var followService = FollowService()
+    @StateObject private var postsService = PostsService()
 
     private let profileService = ProfileService()
 
@@ -222,11 +224,11 @@ struct ProfileView: View {
 
             // Stats row
             HStack(spacing: 0) {
-                statCell(value: "0", label: "帖子")
+                statCell(value: "\(postsService.userPosts.count)", label: "帖子")
                 statDivider()
                 statCell(value: "\(petsService.pets.count)", label: "宠物")
                 statDivider()
-                statCell(value: "0", label: "粉丝")
+                statCell(value: "\(followerCount)", label: "粉丝")
                 statDivider()
                 statCell(value: "\(followService.followingIDs.count)", label: "关注")
             }
@@ -398,8 +400,11 @@ struct ProfileView: View {
 
             Divider()
 
-            // Empty state — replaced with a real grid once posts go to Supabase
-            emptyPostsState
+            if postsService.userPosts.isEmpty {
+                emptyPostsState
+            } else {
+                realPostsGrid
+            }
         }
     }
 
@@ -419,14 +424,8 @@ struct ProfileView: View {
                 actionCard(
                     icon: "square.and.pencil",
                     title: "创建首条帖子",
-                    subtitle: "分享宠物的精彩时刻",
+                    subtitle: "去发布页分享宠物的精彩时刻",
                     color: PawPalTheme.orange
-                )
-                actionCard(
-                    icon: "person.badge.plus",
-                    title: "邀请朋友",
-                    subtitle: "和其他宠物主社交",
-                    color: Color.pink
                 )
             }
             .padding(.horizontal, 20)
@@ -459,13 +458,82 @@ struct ProfileView: View {
         .shadow(color: PawPalTheme.shadow, radius: 8, y: 4)
     }
 
+    private var realPostsGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            ForEach(postsService.userPosts) { post in
+                profilePostCard(post)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+    }
+
+    private func profilePostCard(_ post: RemotePost) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let imageURL = post.imageURLs.first {
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(height: 150)
+                            .frame(maxWidth: .infinity)
+                            .clipped()
+                    case .failure:
+                        profilePostPlaceholder(height: 150, icon: "photo")
+                    default:
+                        profilePostPlaceholder(height: 150, icon: nil)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            } else {
+                profilePostPlaceholder(height: 150, icon: "text.alignleft")
+            }
+
+            Text(post.caption)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(PawPalTheme.primaryText)
+                .lineLimit(2)
+
+            HStack(spacing: 10) {
+                Label("\(post.likeCount)", systemImage: "heart")
+                Label("\(postsService.commentCount(for: post.id))", systemImage: "message")
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(PawPalTheme.secondaryText)
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: PawPalTheme.shadow, radius: 8, y: 4)
+    }
+
+    private func profilePostPlaceholder(height: CGFloat, icon: String?) -> some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(PawPalTheme.cardSoft)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .overlay {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.tertiaryText)
+                } else {
+                    ProgressView()
+                }
+            }
+    }
+
     // MARK: - Helpers
 
     private func loadAll() async {
         async let profileTask: () = loadProfile()
         async let petsTask: () = petsService.loadPets(for: user.id)
         async let followsTask: () = followService.loadFollowing(for: user.id)
-        _ = await (profileTask, petsTask, followsTask)
+        async let postsTask: () = postsService.loadUserPosts(for: user.id)
+        async let followerTask: Int = followService.followerCount(for: user.id)
+        let (_, _, _, _, loadedFollowerCount) = await (profileTask, petsTask, followsTask, postsTask, followerTask)
+        followerCount = loadedFollowerCount
         if activePetID.isEmpty, let first = petsService.pets.first {
             activePetID = first.id.uuidString
         }

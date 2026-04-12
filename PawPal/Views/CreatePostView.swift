@@ -16,6 +16,8 @@ struct CreatePostView: View {
     @State private var selectedImageData: [Data] = []
     @State private var didPost = false
 
+    let onPostPublished: (() -> Void)?
+
     private var selectedPet: RemotePet? {
         petsService.pets.first(where: { $0.id == selectedPetID })
     }
@@ -122,6 +124,10 @@ struct CreatePostView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
+
+            Text("添加宠物后就能回来发动态")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(PawPalTheme.tertiaryText)
         }
         .padding(.top, 80)
     }
@@ -330,6 +336,10 @@ struct CreatePostView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(PawPalTheme.secondaryText)
                     }
+                } else if didPost {
+                    Text("发布成功，正在带你回首页")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.orange)
                 } else if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text("先写点内容才能发布")
                         .font(.system(size: 12, weight: .semibold))
@@ -436,7 +446,8 @@ struct CreatePostView: View {
             selectedItems = []
             selectedImageData = []
             withAnimation { didPost = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                onPostPublished?()
                 withAnimation { didPost = false }
             }
         }

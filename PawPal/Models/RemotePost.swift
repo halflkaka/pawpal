@@ -72,6 +72,34 @@ struct RemotePostImage: Codable {
 
 struct RemoteLike: Codable {
     let user_id: UUID
+
+    init(user_id: UUID) {
+        self.user_id = user_id
+    }
+
+    init(from decoder: Decoder) throws {
+        if let container = try? decoder.singleValueContainer(),
+           let userIDString = try? container.decode(String.self),
+           let userID = UUID(uuidString: userIDString) {
+            self.user_id = userID
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let userID = try? container.decode(UUID.self, forKey: .user_id) {
+            self.user_id = userID
+            return
+        }
+        let userIDString = try container.decode(String.self, forKey: .user_id)
+        guard let userID = UUID(uuidString: userIDString) else {
+            throw DecodingError.dataCorruptedError(forKey: .user_id, in: container, debugDescription: "Invalid user_id UUID string")
+        }
+        self.user_id = userID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case user_id
+    }
 }
 
 struct RemoteCommentStub: Codable {
