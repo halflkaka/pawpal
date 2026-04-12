@@ -37,6 +37,15 @@ Key rules:
 - Files Changed table organized by folder
 - Validations section with ✅ / ⚠️ / ❌ and the exact test command used
 
+## Keeping Docs Current
+
+Update these docs when their content changes — don't let them go stale:
+
+- **ROADMAP.md** — update phase status when features are completed or scope changes. Mark phases ✅ complete, ⚠️ partial, or 🔲 not started based on actual code, not plans.
+- **docs/known-issues.md** — add new issues as they are discovered; remove entries when resolved
+- **docs/decisions.md** — add an entry whenever a significant architectural or product decision is made
+- **docs/scope.md** — update if deferred items become active, or active items get deprioritised
+
 ## Changelog
 
 After every PR is merged, add an entry to `CHANGELOG.md` at the repo root.
