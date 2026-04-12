@@ -15,6 +15,7 @@ struct ProfileView: View {
     @State private var isLoadingProfile = false
     @State private var profileErrorMessage: String?
     @State private var statusMessage: String?
+    @StateObject private var followService = FollowService()
 
     private let profileService = ProfileService()
 
@@ -227,7 +228,7 @@ struct ProfileView: View {
                 statDivider()
                 statCell(value: "0", label: "粉丝")
                 statDivider()
-                statCell(value: "0", label: "关注")
+                statCell(value: "\(followService.followingIDs.count)", label: "关注")
             }
             .padding(.vertical, 12)
             .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -461,8 +462,10 @@ struct ProfileView: View {
     // MARK: - Helpers
 
     private func loadAll() async {
-        await loadProfile()
-        await petsService.loadPets(for: user.id)
+        async let profileTask: () = loadProfile()
+        async let petsTask: () = petsService.loadPets(for: user.id)
+        async let followsTask: () = followService.loadFollowing(for: user.id)
+        _ = await (profileTask, petsTask, followsTask)
         if activePetID.isEmpty, let first = petsService.pets.first {
             activePetID = first.id.uuidString
         }

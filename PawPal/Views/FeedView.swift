@@ -3,13 +3,27 @@ import UIKit
 
 struct FeedView: View {
     @Bindable var authManager: AuthManager
-    @StateObject private var postsService = PostsService()
+    @StateObject private var postsService  = PostsService()
+    @StateObject private var followService = FollowService()
     @State private var commentingPost: RemotePost?
+    @State private var toastMessage: String?
+
+    private var myID: UUID? { authManager.currentUser?.id }
+
+    // True once we've loaded follows at least once
+    private var hasLoadedFollows: Bool { !followService.isLoading }
+    // User follows at least one person → show filtered feed
+    private var isFiltered: Bool { !followService.followingIDs.isEmpty }
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 header
+
+                // Subtle nudge banner when user follows nobody yet
+                if hasLoadedFollows && !isFiltered {
+                    followNudgeBanner
+                }
 
                 if postsService.isLoadingFeed && postsService.feedPosts.isEmpty {
                     feedSkeleton
@@ -19,14 +33,17 @@ struct FeedView: View {
                     ForEach(postsService.feedPosts, id: \.id) { post in
                         PostCard(
                             post: post,
-                            currentUserID: authManager.currentUser?.id,
+                            currentUserID: myID,
                             commentCount: postsService.commentCount(for: post.id),
+                            isFollowingOwner: followService.isFollowing(post.owner_user_id),
+                            isOwnPost: post.owner_user_id == myID,
                             onLike: {
-                                if let uid = authManager.currentUser?.id {
+                                if let uid = myID {
                                     await postsService.toggleLike(postID: post.id, userID: uid)
                                 }
                             },
-                            onComment: { commentingPost = post }
+                            onComment: { commentingPost = post },
+                            onFollow: { await followService.toggleFollow(targetID: post.owner_user_id) }
                         )
                     }
                 }
@@ -40,12 +57,43 @@ struct FeedView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
-        .refreshable { await postsService.loadFeed() }
-        .task { await postsService.loadFeed() }
+        .refreshable { await refreshFeed() }
+        .task {
+            if let uid = myID {
+                await followService.loadFollowing(for: uid)
+            }
+            await refreshFeed()
+        }
+        // Re-filter the feed whenever the following list changes
+        .onChange(of: followService.followingIDs) { _, _ in
+            Task { await refreshFeed() }
+        }
+        // Surface errors as a temporary toast
+        .onChange(of: postsService.errorMessage) { _, msg in
+            guard let msg else { return }
+            showToast(msg)
+        }
+        .onChange(of: followService.errorMessage) { _, msg in
+            guard let msg else { return }
+            showToast(msg)
+        }
+        .overlay(alignment: .top) {
+            if let toast = toastMessage {
+                Text(toast)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.black.opacity(0.75), in: Capsule())
+                    .padding(.top, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
         .sheet(item: $commentingPost) { post in
             CommentsView(
                 postID: post.id,
-                currentUserID: authManager.currentUser?.id,
+                currentUserID: myID,
                 currentUserDisplayName: authManager.currentProfile?.display_name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                     ? authManager.currentProfile!.display_name!
                     : (authManager.currentUser?.displayName ?? authManager.currentUser?.email?.components(separatedBy: "@").first ?? "用户"),
@@ -53,6 +101,42 @@ struct FeedView: View {
                 postsService: postsService
             )
         }
+    }
+
+    // Feed scoped to followed users + self when the user follows anyone;
+    // falls back to all posts so new users always see content.
+    private func showToast(_ message: String) {
+        toastMessage = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            toastMessage = nil
+            postsService.errorMessage = nil
+            followService.errorMessage = nil
+        }
+    }
+
+    private func refreshFeed() async {
+        if let uid = myID, isFiltered {
+            await postsService.loadFeed(followingIDs: followService.feedFilter(includingSelf: uid))
+        } else {
+            await postsService.loadFeed()
+        }
+    }
+
+    // MARK: - Follow nudge banner
+
+    private var followNudgeBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.2.fill")
+                .foregroundStyle(PawPalTheme.orange)
+                .font(.system(size: 14))
+            Text("关注其他铲屎官，首页将只显示他们的动态 🐾")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(PawPalTheme.secondaryText)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PawPalTheme.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     // MARK: - Header
@@ -135,10 +219,14 @@ struct PostCard: View {
     let post: RemotePost
     let currentUserID: UUID?
     let commentCount: Int
+    let isFollowingOwner: Bool
+    let isOwnPost: Bool
     let onLike: () async -> Void
     let onComment: () -> Void
+    let onFollow: () async -> Void
 
     @State private var likeAnimating = false
+    @State private var followAnimating = false
 
     private var isLiked: Bool {
         guard let uid = currentUserID else { return false }
@@ -188,7 +276,32 @@ struct PostCard: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Image(systemName: "ellipsis").foregroundStyle(.secondary).font(.system(size: 14))
+
+            // Follow button — only visible on other people's posts
+            if !isOwnPost {
+                Button {
+                    Task {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) { followAnimating = true }
+                        await onFollow()
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) { followAnimating = false }
+                    }
+                } label: {
+                    Text(isFollowingOwner ? "已关注" : "+ 关注")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(isFollowingOwner ? PawPalTheme.secondaryText : .white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            isFollowingOwner
+                                ? PawPalTheme.cardSoft
+                                : PawPalTheme.orange,
+                            in: Capsule()
+                        )
+                        .scaleEffect(followAnimating ? 0.92 : 1.0)
+                }
+                .buttonStyle(.plain)
+                .animation(.easeInOut(duration: 0.15), value: isFollowingOwner)
+            }
         }
     }
 

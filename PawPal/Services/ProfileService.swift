@@ -17,14 +17,7 @@ struct ProfileUpsertPayload: Encodable {
 }
 
 struct ProfileService {
-    private let client: SupabaseClient
-
-    init() {
-        guard let url = URL(string: SupabaseConfig.urlString) else {
-            fatalError("Invalid Supabase URL")
-        }
-        client = SupabaseClient(supabaseURL: url, supabaseKey: SupabaseConfig.anonKey)
-    }
+    private let client = SupabaseConfig.client
 
     func loadProfile(for userID: UUID) async throws -> RemoteProfile? {
         do {

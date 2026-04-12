@@ -14,14 +14,7 @@ struct AuthError: LocalizedError {
 }
 
 struct SupabaseAuthService: AuthService {
-    private let client: SupabaseClient
-
-    init() {
-        guard let url = URL(string: SupabaseConfig.urlString) else {
-            fatalError("Invalid Supabase URL")
-        }
-        client = SupabaseClient(supabaseURL: url, supabaseKey: SupabaseConfig.anonKey)
-    }
+    private let client = SupabaseConfig.client
 
     func signIn(email: String, password: String) async throws -> AppUser {
         guard !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !password.isEmpty else {

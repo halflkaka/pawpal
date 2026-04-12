@@ -14,62 +14,90 @@ final class PostsService: ObservableObject {
     private let client: SupabaseClient
     private let storageBucket = "post-images"
 
-    // Full join — posts + pet info + images + engagement
-    private static let joinSelect    = "*, pets(*), post_images(id, url, position), likes(user_id), comments(id)"
+    // Fallback chain — tried in order until one succeeds.
+    // Splitting likes/comments into separate levels means a missing comments
+    // table won't also wipe the likes data.
+    private static let selectLevels: [String] = [
+        "*, pets(*), post_images(id, url, position), likes(user_id), comments(id)", // all tables
+        "*, pets(*), post_images(id, url, position), likes(user_id)",               // likes, no comments
+        "*, pets(*), post_images(id, url, position)",                               // images, no engagement
+        "*, pets(*)"                                                                 // bare minimum
+    ]
     private static let commentOnlySelect = "id, comments(id)"
-    // Mid join — posts + pet info + images (no likes/comments tables required)
-    private static let createSelect  = "*, pets(*), post_images(id, url, position)"
-    // Minimal join — posts + pet info only (no post_images table required)
-    private static let minimalSelect = "*, pets(*)"
 
     init() {
-        guard let url = URL(string: SupabaseConfig.urlString) else {
-            fatalError("Invalid Supabase URL")
-        }
-        client = SupabaseClient(supabaseURL: url, supabaseKey: SupabaseConfig.anonKey)
+        client = SupabaseConfig.client
     }
 
     // MARK: - Load Feed
 
-    func loadFeed() async {
+    func loadFeed(followingIDs: [UUID]? = nil) async {
         isLoadingFeed = true
         errorMessage = nil
         defer { isLoadingFeed = false }
 
-        // Try progressively leaner selects so the feed loads
-        // regardless of which optional tables exist yet.
-        let selects = [Self.joinSelect, Self.createSelect, Self.minimalSelect]
-        var lastError: Error?
+        // Snapshot current in-memory likes so we can restore optimistic state
+        // for posts where the server returns an empty likes array (e.g. when
+        // the likes table exists but the join level doesn't include it).
+        let previousLikes: [UUID: [RemoteLike]] = Dictionary(
+            uniqueKeysWithValues: feedPosts.map { ($0.id, $0.likes) }
+        )
 
-        for select in selects {
+        for select in Self.selectLevels {
             do {
-                let posts: [RemotePost] = try await client
-                    .from("posts")
-                    .select(select)
+                // Filters (.in) must come before transforms (.order/.limit),
+                // so build the filter step first, then chain order+limit.
+                var filter = client.from("posts").select(select)
+                if let ids = followingIDs, !ids.isEmpty {
+                    filter = filter.in("owner_user_id", values: ids.map(\.uuidString))
+                }
+
+                var posts: [RemotePost] = try await filter
                     .order("created_at", ascending: false)
                     .limit(50)
                     .execute()
                     .value
-                feedPosts = posts
-                commentCounts = Dictionary(uniqueKeysWithValues: posts.map { ($0.id, $0.commentCount) })
-                await refreshCommentCounts(for: posts.map(\.id))
+
+                // Restore optimistic like state: if the server returned an empty
+                // likes array for a post we already have likes for locally,
+                // keep the local version until the next full successful join.
+                for i in posts.indices {
+                    if posts[i].likes.isEmpty, let prev = previousLikes[posts[i].id], !prev.isEmpty {
+                        posts[i].likes = prev
+                    }
+                }
+
+                let mergedPosts = posts.map { post -> RemotePost in
+                    var merged = post
+                    if let previous = feedPosts.first(where: { $0.id == post.id }) {
+                        if merged.likes.isEmpty, !previous.likes.isEmpty {
+                            merged.likes = previous.likes
+                        }
+                        if merged.comments.isEmpty, let knownCount = commentCounts[post.id], knownCount > 0 {
+                            merged.comments = Array(repeating: RemoteCommentStub(id: UUID()), count: knownCount)
+                        }
+                    }
+                    return merged
+                }
+
+                feedPosts = mergedPosts
+                commentCounts = Dictionary(uniqueKeysWithValues: mergedPosts.map { post in
+                    (post.id, max(post.commentCount, commentCounts[post.id] ?? 0))
+                })
+                await refreshCommentCounts(for: mergedPosts.map(\.id))
                 return
             } catch {
                 print("[PostsService] loadFeed select='\(select)' 失败: \(error)")
-                lastError = error
             }
         }
 
-        // All three selects failed — real problem (RLS, network, etc.)
-        print("[PostsService] loadFeed 全部失败: \(lastError?.localizedDescription ?? "unknown")")
         errorMessage = "动态加载失败，下拉可重试。"
     }
 
     // MARK: - Load User Posts (for profile grid)
 
     func loadUserPosts(for userID: UUID) async {
-        let selects = [Self.joinSelect, Self.createSelect, Self.minimalSelect]
-        for select in selects {
+        for select in Self.selectLevels {
             do {
                 let posts: [RemotePost] = try await client
                     .from("posts")
@@ -78,11 +106,24 @@ final class PostsService: ObservableObject {
                     .order("created_at", ascending: false)
                     .execute()
                     .value
-                userPosts = posts
-                for post in posts {
-                    commentCounts[post.id] = post.commentCount
+                let mergedPosts = posts.map { post -> RemotePost in
+                    var merged = post
+                    if let previous = userPosts.first(where: { $0.id == post.id }) {
+                        if merged.likes.isEmpty, !previous.likes.isEmpty {
+                            merged.likes = previous.likes
+                        }
+                        if merged.comments.isEmpty, let knownCount = commentCounts[post.id], knownCount > 0 {
+                            merged.comments = Array(repeating: RemoteCommentStub(id: UUID()), count: knownCount)
+                        }
+                    }
+                    return merged
                 }
-                await refreshCommentCounts(for: posts.map(\.id))
+
+                userPosts = mergedPosts
+                for post in mergedPosts {
+                    commentCounts[post.id] = max(post.commentCount, commentCounts[post.id] ?? 0)
+                }
+                await refreshCommentCounts(for: mergedPosts.map(\.id))
                 return
             } catch {
                 print("[PostsService] loadUserPosts select='\(select)' 失败: \(error)")
@@ -98,7 +139,8 @@ final class PostsService: ObservableObject {
         petID: UUID,
         caption: String,
         mood: String,
-        imageData: [Data]
+        imageData: [Data],
+        followingIDs: [UUID]? = nil
     ) async -> Bool {
         isPosting = true
         errorMessage = nil
@@ -155,7 +197,7 @@ final class PostsService: ObservableObject {
                 }
             }
 
-            await loadFeed()
+            await loadFeed(followingIDs: followingIDs)
             errorMessage = nil   // post succeeded — don't show any feed-load noise
             return true
         } catch {
@@ -216,37 +258,93 @@ final class PostsService: ObservableObject {
                     .execute()
             }
         } catch {
-            // Roll back on failure
+            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            print("[PostsService] toggleLike 失败: \(msg)")
+
+            if !alreadyLiked && msg.lowercased().contains("duplicate") {
+                // DB already has this like (local state was stale) — keep the
+                // optimistic "liked" update, don't rollback.
+                await syncLikes(for: postID)
+                return
+            }
+
             feedPosts[index] = original
+            errorMessage = "点赞失败: \(msg)"
         }
+
+        // Keep local state in sync after every successful toggle
+        await syncLikes(for: postID)
+    }
+
+    /// Fetches the real like list for one post and updates feedPosts in place.
+    private func syncLikes(for postID: UUID) async {
+        struct LikeRow: Codable { let user_id: UUID }
+        guard let likes = try? await client
+            .from("likes")
+            .select("user_id")
+            .eq("post_id", value: postID.uuidString)
+            .execute()
+            .value as [LikeRow],
+              let index = feedPosts.firstIndex(where: { $0.id == postID })
+        else { return }
+        feedPosts[index].likes = likes.map { RemoteLike(user_id: $0.user_id) }
     }
 
     // MARK: - Comments
 
     func loadComments(for postID: UUID) async -> [RemoteComment] {
-        let selects = [
-            "*, profiles!user_id(username, display_name)",
-            "id, post_id, user_id, content, created_at"
-        ]
-
-        for select in selects {
-            do {
-                let comments: [RemoteComment] = try await client
-                    .from("comments")
-                    .select(select)
-                    .eq("post_id", value: postID.uuidString)
-                    .order("created_at", ascending: true)
-                    .execute()
-                    .value
-                commentCounts[postID] = comments.count
-                syncCommentCount(postID: postID, count: comments.count)
-                return comments
-            } catch {
-                print("[PostsService] loadComments select='\(select)' 失败: \(error)")
-            }
+        struct CommentRow: Codable {
+            let id: UUID; let post_id: UUID; let user_id: UUID
+            let content: String; let created_at: Date
+        }
+        struct ProfileRow: Codable {
+            let id: UUID; let username: String?; let display_name: String?
         }
 
-        return []
+        // Step 1: load bare comment rows (no join dependency)
+        let rows: [CommentRow]
+        do {
+            rows = try await client
+                .from("comments")
+                .select("id, post_id, user_id, content, created_at")
+                .eq("post_id", value: postID.uuidString)
+                .order("created_at", ascending: true)
+                .execute()
+                .value
+        } catch {
+            print("[PostsService] loadComments 失败: \(error)")
+            return []
+        }
+
+        guard !rows.isEmpty else {
+            commentCounts[postID] = 0
+            syncCommentCount(postID: postID, count: 0)
+            return []
+        }
+
+        // Step 2: batch-fetch profiles for all distinct authors
+        let authorIDs = Array(Set(rows.map { $0.user_id.uuidString }))
+        let profiles: [ProfileRow] = (try? await client
+            .from("profiles")
+            .select("id, username, display_name")
+            .in("id", value: authorIDs)
+            .execute()
+            .value) ?? []
+        let profileMap = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+
+        // Step 3: assemble full comment objects
+        let comments = rows.map { row -> RemoteComment in
+            let p = profileMap[row.user_id]
+            return RemoteComment(
+                id: row.id, post_id: row.post_id, user_id: row.user_id,
+                content: row.content, created_at: row.created_at, profiles: nil,
+                username: p?.username, display_name: p?.display_name
+            )
+        }
+
+        commentCounts[postID] = comments.count
+        syncCommentCount(postID: postID, count: comments.count)
+        return comments
     }
 
     func refreshCommentCount(for postID: UUID) async {
@@ -255,111 +353,61 @@ final class PostsService: ObservableObject {
 
     func addComment(postID: UUID, userID: UUID, content: String) async -> RemoteComment? {
         struct NewComment: Encodable {
-            let post_id: UUID
-            let user_id: UUID
-            let content: String
+            let post_id: UUID; let user_id: UUID; let content: String
         }
         struct CommentRow: Codable {
-            let id: UUID
-            let post_id: UUID
-            let user_id: UUID
-            let content: String
-            let created_at: Date
+            let id: UUID; let post_id: UUID; let user_id: UUID
+            let content: String; let created_at: Date
         }
-
         struct ProfileRow: Codable {
-            let username: String?
-            let display_name: String?
+            let username: String?; let display_name: String?
         }
+
+        // INSERT exactly once — no selects here to avoid duplicate rows on retry
         let payload = NewComment(post_id: postID, user_id: userID, content: content)
-
-        // 1. Try full insert + select with profiles join
-        if let comment = try? await client
-            .from("comments")
-            .insert(payload)
-            .select("*, profiles!user_id(username, display_name)")
-            .single()
-            .execute()
-            .value as RemoteComment {
-            incrementCommentCount(postID: postID)
-            bumpCommentStub(postID: postID, commentID: comment.id)
-            return comment
-        }
-
-        // 2. Try insert + select without profiles, then fetch profile separately
-        if let row = try? await client
-            .from("comments")
-            .insert(payload)
-            .select("id, post_id, user_id, content, created_at")
-            .single()
-            .execute()
-            .value as CommentRow {
-            let profileRow: ProfileRow? = try? await client
-                .from("profiles")
-                .select("username, display_name")
-                .eq("id", value: row.user_id.uuidString)
-                .single()
-                .execute()
-                .value
-
-            let comment = RemoteComment(
-                id: row.id,
-                post_id: row.post_id,
-                user_id: row.user_id,
-                content: row.content,
-                created_at: row.created_at,
-                profiles: nil,
-                username: profileRow?.username,
-                display_name: profileRow?.display_name
-            )
-            incrementCommentCount(postID: postID)
-            bumpCommentStub(postID: postID, commentID: comment.id)
-            return comment
-        }
-
-        // 3. Bare insert, then re-query the latest comment for this user/post
         do {
             try await client.from("comments").insert(payload).execute()
+        } catch {
+            print("[PostsService] addComment insert 失败: \(error)")
+            return nil
+        }
 
-            if let comments = try? await client
-                .from("comments")
+        // Fetch the comment back — try with profiles join first, then without
+        let row: CommentRow? = (
+            try? await client.from("comments")
                 .select("id, post_id, user_id, content, created_at")
                 .eq("post_id", value: postID.uuidString)
                 .eq("user_id", value: userID.uuidString)
                 .order("created_at", ascending: false)
                 .limit(1)
                 .execute()
-                .value as [CommentRow],
-               let row = comments.first {
-                let profileRow: ProfileRow? = try? await client
-                    .from("profiles")
-                    .select("username, display_name")
-                    .eq("id", value: row.user_id.uuidString)
-                    .single()
-                    .execute()
-                    .value
+                .value as [CommentRow]
+        )?.first
 
-                let comment = RemoteComment(
-                    id: row.id,
-                    post_id: row.post_id,
-                    user_id: row.user_id,
-                    content: row.content,
-                    created_at: row.created_at,
-                    profiles: nil,
-                    username: profileRow?.username,
-                    display_name: profileRow?.display_name
-                )
-                incrementCommentCount(postID: postID)
-                bumpCommentStub(postID: postID, commentID: comment.id)
-                return comment
-            }
-
-            print("[PostsService] addComment 插入成功，但回读失败")
-            return nil
-        } catch {
-            print("[PostsService] addComment 全部失败: \(error)")
+        guard let row else {
+            // Insert succeeded but read-back failed — still update counts
+            bumpCommentStub(postID: postID, commentID: UUID())
+            incrementCommentCount(postID: postID)
             return nil
         }
+
+        // Fetch author name separately (avoids dependency on FK to profiles)
+        let profileRow: ProfileRow? = try? await client
+            .from("profiles")
+            .select("username, display_name")
+            .eq("id", value: userID.uuidString)
+            .single()
+            .execute()
+            .value
+
+        let comment = RemoteComment(
+            id: row.id, post_id: row.post_id, user_id: row.user_id,
+            content: row.content, created_at: row.created_at, profiles: nil,
+            username: profileRow?.username, display_name: profileRow?.display_name
+        )
+        bumpCommentStub(postID: postID, commentID: comment.id)
+        incrementCommentCount(postID: postID)
+        return comment
     }
 
     private func bumpCommentStub(postID: UUID, commentID: UUID) {
