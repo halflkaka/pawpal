@@ -1,15 +1,28 @@
-# PawPal Database Schema (Proposed)
+# Database Guide
 
-## Design Rule
+PawPal uses Supabase (PostgreSQL) as its backend. This guide covers the design philosophy, table structure, and key decisions to keep in mind when making schema changes.
 
-- `profiles` = lightweight account identity
-- `pets` = rich public social identity
+---
 
-The app should stay pet-first. Human accounts exist for login, ownership, search, and trust. Pets carry most of the expressive public identity.
+## Design Philosophy
 
-## 1. profiles
+**Profiles are lightweight. Pets are the social actors.**
 
-Represents the app-level user account tied to Supabase auth.
+- `profiles` = account identity tied to Supabase auth (login, ownership, search)
+- `pets` = rich public social identity (the visible presence in the feed)
+
+Keep human profiles intentionally lean. Pets carry most of the expressive content — bio, breed, personality, photos. When in doubt, put social attributes on `pets`, not `profiles`.
+
+**Social graph connects users, not pets.**
+
+Follows are between user accounts (`follower_user_id → followed_user_id`). This keeps feed queries simple and avoids a complex pet-to-pet relationship layer.
+
+---
+
+## Tables
+
+### profiles
+Represents the app-level user account, tied to Supabase auth.
 
 ```sql
 create table profiles (
@@ -25,13 +38,14 @@ create table profiles (
 );
 ```
 
-### Notes
-- `email` should stay in Supabase auth, not duplicated in `profiles`
-- `username` is the stable searchable identity
+- `username` is the stable, searchable identity
 - `display_name` is the softer human-facing label
-- keep human profiles intentionally lightweight
+- `email` stays in Supabase auth — do not duplicate it here
 
-## 2. pets
+---
+
+### pets
+The primary social actor. Richer than profiles by design.
 
 ```sql
 create table pets (
@@ -53,13 +67,14 @@ create table pets (
 );
 ```
 
-### Notes
-- `bio` = public pet intro
-- `notes` = owner-facing private or practical notes
-- `age_text` supports pets with unknown exact birthday
-- pets should be richer than user accounts because they are the visible social actors
+- `bio` is public-facing
+- `notes` is owner-facing (private or practical)
+- `age_text` supports pets with unknown exact birthdays
 
-## 3. posts
+---
+
+### posts
+Content shared by users, linked to a pet.
 
 ```sql
 create table posts (
@@ -73,7 +88,12 @@ create table posts (
 );
 ```
 
-## 4. post_images
+- `pet_id` is nullable — if the pet is deleted, posts are preserved with `set null`
+
+---
+
+### post_images
+Images attached to a post, ordered by position.
 
 ```sql
 create table post_images (
@@ -85,7 +105,10 @@ create table post_images (
 );
 ```
 
-## 5. follows
+---
+
+### follows
+Social graph between user accounts.
 
 ```sql
 create table follows (
@@ -98,7 +121,9 @@ create table follows (
 );
 ```
 
-## Recommended Indexes
+---
+
+## Indexes
 
 ```sql
 create index idx_pets_owner_user_id on pets(owner_user_id);
@@ -110,17 +135,21 @@ create index idx_follows_follower_user_id on follows(follower_user_id);
 create index idx_follows_followed_user_id on follows(followed_user_id);
 ```
 
+---
+
 ## Feed Query Shape
 
-Feed should retrieve posts where:
-- owner_user_id is current user
-- OR owner_user_id is in users followed by current user
+The home feed retrieves posts where:
+- `owner_user_id` is the current user, **or**
+- `owner_user_id` is someone the current user follows
 
-Ordered by:
-- created_at desc
+Ordered by `created_at desc`.
 
-## Notes
+---
 
-- Keep pet ownership under users
-- Keep social graph between users, not pets
-- Likes/comments can be added later once feed/auth is stable
+## Adding or Changing Tables
+
+- Add new SQL files under `supabase/` with a numeric prefix (e.g. `012_add_tags.sql`)
+- Apply in order — migrations are cumulative
+- Update this doc if the schema or design philosophy changes
+- Never modify existing migration files — add a new one instead
