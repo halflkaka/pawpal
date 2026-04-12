@@ -6,7 +6,9 @@ import Supabase
 final class PostsService: ObservableObject {
     @Published var feedPosts: [RemotePost] = []
     @Published var userPosts: [RemotePost] = []
+    @Published var petPosts: [RemotePost] = []
     @Published var isLoadingFeed = false
+    @Published var isLoadingPetPosts = false
     @Published var isPosting = false
     @Published var errorMessage: String?
     @Published private(set) var commentCounts: [UUID: Int] = [:]
@@ -150,6 +152,49 @@ final class PostsService: ObservableObject {
         userPosts = []
     }
 
+    // MARK: - Load Pet Posts (for pet profile page)
+
+    func loadPetPosts(for petID: UUID) async {
+        isLoadingPetPosts = true
+        errorMessage = nil
+        defer { isLoadingPetPosts = false }
+
+        let currentUserID = try? await client.auth.session.user.id
+
+        for select in Self.selectLevels {
+            do {
+                var posts: [RemotePost] = try await client
+                    .from("posts")
+                    .select(select)
+                    .eq("pet_id", value: petID.uuidString)
+                    .order("created_at", ascending: false)
+                    .execute()
+                    .value
+
+                if let currentUserID {
+                    for i in posts.indices {
+                        if posts[i].likes.isEmpty,
+                           let prev = petPosts.first(where: { $0.id == posts[i].id }),
+                           prev.likes.contains(where: { $0.user_id == currentUserID }) {
+                            posts[i].likes = [RemoteLike(user_id: currentUserID)]
+                        }
+                    }
+                }
+
+                petPosts = posts
+                await refreshLikes(for: posts.map(\.id))
+                for post in posts {
+                    commentCounts[post.id] = max(post.commentCount, commentCounts[post.id] ?? 0)
+                }
+                await refreshCommentCounts(for: posts.map(\.id))
+                return
+            } catch {
+                print("[PostsService] loadPetPosts select='\(select)' 失败: \(error)")
+            }
+        }
+        petPosts = []
+    }
+
     // MARK: - Create Post
 
     func createPost(
@@ -240,6 +285,7 @@ final class PostsService: ObservableObject {
                 .execute()
             feedPosts.removeAll { $0.id == postID }
             userPosts.removeAll { $0.id == postID }
+            petPosts.removeAll { $0.id == postID }
             commentCounts[postID] = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -333,6 +379,9 @@ final class PostsService: ObservableObject {
                 }
                 if let index = userPosts.firstIndex(where: { $0.id == postID }) {
                     userPosts[index].likes = likes
+                }
+                if let index = petPosts.firstIndex(where: { $0.id == postID }) {
+                    petPosts[index].likes = likes
                 }
             }
         } catch {
@@ -496,6 +545,15 @@ final class PostsService: ObservableObject {
                 updated.comments.append(RemoteCommentStub(id: UUID()))
             }
             userPosts[index] = updated
+        }
+
+        if let index = petPosts.firstIndex(where: { $0.id == postID }) {
+            var updated = petPosts[index]
+            updated.comments = Array(updated.comments.prefix(count))
+            while updated.comments.count < count {
+                updated.comments.append(RemoteCommentStub(id: UUID()))
+            }
+            petPosts[index] = updated
         }
     }
 
