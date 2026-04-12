@@ -2,8 +2,11 @@ import SwiftUI
 
 struct ContactsView: View {
     @StateObject private var postsService = PostsService()
+    @StateObject private var petsService = PetsService()
+    @State private var discoverTab: DiscoverTab = .posts
     @State private var selectedFilter = DiscoverFilter.all
     @State private var searchText = ""
+    @State private var petSpeciesFilter = "all"
 
     private var filteredPosts: [RemotePost] {
         postsService.feedPosts.filter { post in
@@ -41,17 +44,24 @@ struct ContactsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                searchBar
-                filterRow
+                tabSwitcher
 
-                if postsService.isLoadingFeed && postsService.feedPosts.isEmpty {
-                    loadingState
-                } else if filteredPosts.isEmpty {
-                    emptyState
+                if discoverTab == .posts {
+                    searchBar
+                    filterRow
+
+                    if postsService.isLoadingFeed && postsService.feedPosts.isEmpty {
+                        loadingState
+                    } else if filteredPosts.isEmpty {
+                        emptyState
+                    } else {
+                        featuredSection
+                        trendsSection
+                        latestSection
+                    }
                 } else {
-                    featuredSection
-                    trendsSection
-                    latestSection
+                    petSpeciesRow
+                    petsContent
                 }
             }
             .padding(.horizontal, 16)
@@ -63,12 +73,24 @@ struct ContactsView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
+        .navigationDestination(for: RemotePet.self) { pet in
+            PetProfileView(pet: pet)
+        }
         .refreshable {
-            await postsService.loadFeed()
+            if discoverTab == .posts {
+                await postsService.loadFeed()
+            } else {
+                await petsService.loadAllPets()
+            }
         }
         .task {
             if postsService.feedPosts.isEmpty {
                 await postsService.loadFeed()
+            }
+        }
+        .onChange(of: discoverTab) { _, tab in
+            if tab == .pets && petsService.allPets.isEmpty && !petsService.isLoadingAll {
+                Task { await petsService.loadAllPets() }
             }
         }
     }
@@ -222,6 +244,152 @@ struct ContactsView: View {
         .padding(.top, 50)
     }
 
+    // MARK: - Tab switcher
+
+    private var tabSwitcher: some View {
+        HStack(spacing: 0) {
+            ForEach([DiscoverTab.posts, DiscoverTab.pets], id: \.self) { tab in
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        discoverTab = tab
+                    }
+                } label: {
+                    VStack(spacing: 6) {
+                        HStack(spacing: 6) {
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 13, weight: .bold))
+                            Text(tab.title)
+                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                        }
+                        .foregroundStyle(discoverTab == tab ? PawPalTheme.orange : PawPalTheme.tertiaryText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+
+                        Rectangle()
+                            .fill(discoverTab == tab ? PawPalTheme.orange : Color.clear)
+                            .frame(height: 2)
+                            .clipShape(Capsule())
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: PawPalTheme.shadow, radius: 8, y: 3)
+    }
+
+    // MARK: - Pets tab
+
+    private var filteredPets: [RemotePet] {
+        guard petSpeciesFilter != "all" else { return petsService.allPets }
+        return petsService.allPets.filter {
+            $0.species?.lowercased() == petSpeciesFilter.lowercased()
+        }
+    }
+
+    private var petSpeciesRow: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(PetSpeciesFilter.allCases, id: \.self) { filter in
+                    Button {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                            petSpeciesFilter = filter.rawValue
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(filter.emoji)
+                            Text(filter.label)
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                        }
+                        .foregroundStyle(petSpeciesFilter == filter.rawValue ? .white : PawPalTheme.secondaryText)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(
+                            petSpeciesFilter == filter.rawValue ? PawPalTheme.orange : .white,
+                            in: Capsule()
+                        )
+                        .shadow(
+                            color: petSpeciesFilter == filter.rawValue ? PawPalTheme.orange.opacity(0.3) : PawPalTheme.softShadow,
+                            radius: 6, y: 3
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .animation(.easeInOut(duration: 0.15), value: petSpeciesFilter == filter.rawValue)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var petsContent: some View {
+        Group {
+            if petsService.isLoadingAll && petsService.allPets.isEmpty {
+                petsLoadingState
+            } else if let error = petsService.errorMessage, petsService.allPets.isEmpty {
+                VStack(spacing: 12) {
+                    Text("⚠️")
+                        .font(.system(size: 40))
+                    Text(error)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, 48)
+                .padding(.horizontal, 32)
+            } else if filteredPets.isEmpty {
+                petsEmptyState
+            } else {
+                petsGrid
+            }
+        }
+    }
+
+    private var petsGrid: some View {
+        LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+            spacing: 12
+        ) {
+            ForEach(filteredPets) { pet in
+                NavigationLink(value: pet) {
+                    PetDiscoverCard(pet: pet)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var petsLoadingState: some View {
+        LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+            spacing: 12
+        ) {
+            ForEach(0..<6, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(PawPalTheme.cardSoft)
+                    .frame(height: 160)
+                    .redacted(reason: .placeholder)
+            }
+        }
+    }
+
+    private var petsEmptyState: some View {
+        VStack(spacing: 14) {
+            Text("🐾")
+                .font(.system(size: 48))
+            Text(petSpeciesFilter == "all" ? "还没有宠物档案" : "没有找到这类宠物")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.primaryText)
+            Text("快去发帖让你的宠物出现在这里吧！")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 40)
+        .padding(.bottom, 40)
+    }
+
     private func matchesFilter(_ post: RemotePost) -> Bool {
         switch selectedFilter {
         case .all:
@@ -271,6 +439,122 @@ struct ContactsView: View {
         if value.contains("疯") || value.contains("play") || value.contains("run") { return "🌀" }
         if value.contains("吃") || value.contains("snack") || value.contains("treat") { return "🍖" }
         return "🐾"
+    }
+}
+
+private enum DiscoverTab: Hashable {
+    case posts
+    case pets
+
+    var title: String {
+        switch self {
+        case .posts: return "动态"
+        case .pets:  return "宠物"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .posts: return "square.stack.fill"
+        case .pets:  return "pawprint.fill"
+        }
+    }
+}
+
+private enum PetSpeciesFilter: String, CaseIterable {
+    case all, dog, cat, rabbit, bird, hamster
+
+    var label: String {
+        switch self {
+        case .all:     return "全部"
+        case .dog:     return "狗狗"
+        case .cat:     return "猫咪"
+        case .rabbit:  return "兔兔"
+        case .bird:    return "鸟类"
+        case .hamster: return "仓鼠"
+        }
+    }
+
+    var emoji: String {
+        switch self {
+        case .all:     return "🐾"
+        case .dog:     return "🐶"
+        case .cat:     return "🐱"
+        case .rabbit:  return "🐰"
+        case .bird:    return "🦜"
+        case .hamster: return "🐹"
+        }
+    }
+}
+
+private struct PetDiscoverCard: View {
+    let pet: RemotePet
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Avatar / emoji
+            ZStack {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [PawPalTheme.orange.opacity(0.25), PawPalTheme.cardSoft],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 110)
+                Text(speciesEmoji)
+                    .font(.system(size: 52))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(pet.name)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(PawPalTheme.primaryText)
+                    .lineLimit(1)
+
+                if let meta = metaLine, !meta.isEmpty {
+                    Text(meta)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.secondaryText)
+                        .lineLimit(1)
+                }
+
+                if let city = trimmed(pet.home_city) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "location.fill")
+                            .font(.system(size: 10))
+                        Text(city)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(PawPalTheme.tertiaryText)
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+        .padding(10)
+        .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .shadow(color: PawPalTheme.shadow, radius: 10, y: 4)
+    }
+
+    private var speciesEmoji: String {
+        switch pet.species?.lowercased() {
+        case "dog": return "🐶"
+        case "cat": return "🐱"
+        case "rabbit", "bunny": return "🐰"
+        case "bird": return "🦜"
+        case "hamster": return "🐹"
+        default: return "🐾"
+        }
+    }
+
+    private var metaLine: String? {
+        let pieces = [trimmed(pet.species), trimmed(pet.breed), trimmed(pet.age)]
+            .compactMap { $0 }
+        return pieces.isEmpty ? nil : pieces.joined(separator: " · ")
+    }
+
+    private func trimmed(_ val: String?) -> String? {
+        guard let v = val?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return nil }
+        return v
     }
 }
 

@@ -10,4 +10,6 @@ Things that are broken, deferred, or need attention. Keep this up to date as iss
 
 ## Known Gaps
 
-_Nothing else tracked yet. Add entries here as issues are discovered during development._
+- **Discover tab resets to Posts on every re-entry** — `ContactsView` is a `@State`-owning view and is recreated each time the user switches tabs in `MainTabView`. The selected tab (Posts/Pets) and the species filter reset to defaults. Fix requires lifting `discoverTab` and `petSpeciesFilter` into a shared `@StateObject` coordinator or `MainTabView`. Low urgency for v1.
+
+- **Pet profile post tiles are not tappable** — `PetProfileView` renders a 2-column post grid but tiles have no tap handler. Same gap exists in `ProfileView`'s post grid. Both need a post detail view to link to.
