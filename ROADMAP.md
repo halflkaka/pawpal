@@ -27,12 +27,15 @@ Phases 1 and 2 are complete. Phase 3 is partially done. Phases 4–6 are upcomin
 - Trending topics derived dynamically from real post data
 - 🔲 True pet-first explore (browse by breed, find pets near you) not yet built — current discovery is post-based filtering, not pet-based browsing
 
-## Phase 4 — Pet Profiles as First-Class Pages 🔲 Not started
+## Phase 4 — Pet Profiles as First-Class Pages ⚠️ Partial
 
 - Pet management (add, edit, delete) is fully real in `ProfileView`
-- 🔲 Dedicated pet profile page — tap a pet to see its photo, bio, stats, post grid
-- 🔲 Pet-specific follow (follow a pet, not just a user)
-- 🔲 Profile photo upload for user avatars and pet avatars
+- ✅ Dedicated pet profile page (`PetProfileView`) — navigable from profile, shows bio, tag pills, city, stats, post grid
+- ✅ Pet avatar upload — `AvatarService` compresses and uploads to Supabase Storage; `PetsService.addPet` / `updatePet` accept `avatarData` and persist `avatar_url`
+- ✅ Avatar upload in editor — `ProfilePetEditorSheet` supports photo picker and passes `avatarData` through
+- ✅ Avatar photo display in `PetProfileView` — `AsyncImage` loads from `pet.avatar_url`; falls back to species emoji on nil or load failure
+- 🔲 Pet-specific follow (follow a pet, not just a user) — current follow graph is user-to-user only
+- 🔲 User avatar upload — no equivalent of `AvatarService` for owner profile photos
 
 ## Phase 5 — Messaging 🔲 Stub only
 

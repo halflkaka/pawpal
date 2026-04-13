@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import MapKit
 
 struct ProfileView: View {
     let user: AppUser
@@ -687,6 +688,7 @@ private struct ProfilePetEditorSheet: View {
     @State private var homeCity: String
     @State private var bio: String
     @State private var pickedAvatarItem: PhotosPickerItem?
+    @State private var showingLocationPicker = false
     @State private var pickedAvatarData: Data?
     @State private var pickedAvatarImage: Image?
 
@@ -719,12 +721,14 @@ private struct ProfilePetEditorSheet: View {
         _sex      = State(initialValue: pet?.sex ?? "")
         _homeCity = State(initialValue: pet?.home_city ?? "")
         _bio      = State(initialValue: pet?.bio ?? "")
+        let ageUnits_    = ["岁", "个月"]
+        let weightUnits_ = ["公斤", "斤"]
         let parsedAge    = Self.splitMeasurement(pet?.age,    fallbackUnit: "岁")
         _ageValue    = State(initialValue: parsedAge.value)
-        _ageUnit     = State(initialValue: parsedAge.unit)
+        _ageUnit     = State(initialValue: ageUnits_.contains(parsedAge.unit)    ? parsedAge.unit    : "岁")
         let parsedWeight = Self.splitMeasurement(pet?.weight, fallbackUnit: "公斤")
         _weightValue = State(initialValue: parsedWeight.value)
-        _weightUnit  = State(initialValue: parsedWeight.unit)
+        _weightUnit  = State(initialValue: weightUnits_.contains(parsedWeight.unit) ? parsedWeight.unit : "公斤")
     }
 
     var body: some View {
@@ -832,11 +836,7 @@ private struct ProfilePetEditorSheet: View {
                                             .keyboardType(.decimalPad)
                                             .multilineTextAlignment(.trailing)
                                             .frame(width: 60)
-                                        Picker("", selection: $ageUnit) {
-                                            ForEach(ageUnits, id: \.self) { Text($0).tag($0) }
-                                        }
-                                        .pickerStyle(.menu)
-                                        .labelsHidden()
+                                        unitMenu(options: ageUnits, selection: $ageUnit)
                                     }
                                 }
 
@@ -848,19 +848,28 @@ private struct ProfilePetEditorSheet: View {
                                             .keyboardType(.decimalPad)
                                             .multilineTextAlignment(.trailing)
                                             .frame(width: 60)
-                                        Picker("", selection: $weightUnit) {
-                                            ForEach(weightUnits, id: \.self) { Text($0).tag($0) }
-                                        }
-                                        .pickerStyle(.menu)
-                                        .labelsHidden()
+                                        unitMenu(options: weightUnits, selection: $weightUnit)
                                     }
                                 }
 
                                 Divider().padding(.leading, 16)
 
                                 fieldRow(label: "家乡") {
-                                    TextField("例如：西雅图", text: $homeCity)
-                                        .multilineTextAlignment(.trailing)
+                                    Button { showingLocationPicker = true } label: {
+                                        HStack(spacing: 6) {
+                                            Text(homeCity.isEmpty ? "选择城市" : homeCity)
+                                                .foregroundStyle(homeCity.isEmpty ? Color(.placeholderText) : PawPalTheme.primaryText)
+                                                .lineLimit(1)
+                                                .truncationMode(.tail)
+                                            Image(systemName: "location.fill")
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(PawPalTheme.orange)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .sheet(isPresented: $showingLocationPicker) {
+                                        LocationPickerSheet(selection: $homeCity)
+                                    }
                                 }
                             }
                             .background(Color(.systemBackground))
@@ -1006,9 +1015,38 @@ private struct ProfilePetEditorSheet: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.65), value: selected)
     }
 
+    private func unitMenu(options: [String], selection: Binding<String>) -> some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        selection.wrappedValue = option
+                    }
+                } label: {
+                    if selection.wrappedValue == option {
+                        Label(option, systemImage: "checkmark")
+                    } else {
+                        Text(option)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Text(selection.wrappedValue)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .foregroundStyle(PawPalTheme.orange)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(PawPalTheme.orange.opacity(0.12), in: Capsule())
+        }
+    }
+
     private var sexSelector: some View {
         HStack(spacing: 6) {
-            ForEach([("未设置", ""), ("公", "Male"), ("母", "Female")], id: \.1) { label, value in
+            ForEach([("公", "Male"), ("母", "Female")], id: \.1) { label, value in
                 let selected = sex == value
                 Button {
                     sex = value
@@ -1048,9 +1086,13 @@ private struct ProfilePetEditorSheet: View {
                         .foregroundStyle(PawPalTheme.orange)
                 }
             }
-            Spacer()
+            .fixedSize(horizontal: true, vertical: false)
+
+            Spacer(minLength: 8)
+
             content()
                 .font(.system(size: 15))
+                .multilineTextAlignment(.trailing)  // propagates into any TextField in content
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -1234,5 +1276,104 @@ private struct ProfileAccountEditorSheet: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 16)
+    }
+}
+
+// MARK: - Location Picker
+
+/// MKLocalSearchCompleter wrapper — publishes results as the query changes.
+@MainActor
+private final class LocationCompleter: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
+    @Published var results: [MKLocalSearchCompletion] = []
+    private let completer = MKLocalSearchCompleter()
+
+    override init() {
+        super.init()
+        completer.delegate = self
+        completer.resultTypes = .address
+    }
+
+    func search(_ query: String) {
+        completer.queryFragment = query
+    }
+
+    nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        let r = completer.results
+        Task { @MainActor in self.results = r }
+    }
+
+    nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        Task { @MainActor in self.results = [] }
+    }
+}
+
+private struct LocationPickerSheet: View {
+    @Binding var selection: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @StateObject private var completer = LocationCompleter()
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if query.isEmpty {
+                    Section {
+                        Label("搜索城市或地区", systemImage: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 14))
+                    }
+                } else if completer.results.isEmpty {
+                    Section {
+                        Label("没有找到匹配结果", systemImage: "mappin.slash")
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 14))
+                    }
+                } else {
+                    Section {
+                        ForEach(completer.results, id: \.title) { result in
+                            Button {
+                                let city = result.subtitle.isEmpty
+                                    ? result.title
+                                    : "\(result.title), \(result.subtitle)"
+                                selection = city
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(result.title)
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(PawPalTheme.primaryText)
+                                    if !result.subtitle.isEmpty {
+                                        Text(result.subtitle)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("选择家乡")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索城市、地区…")
+            .onChange(of: query) { _, q in completer.search(q) }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                if !selection.isEmpty {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("清除") {
+                            selection = ""
+                            dismiss()
+                        }
+                        .foregroundStyle(.red)
+                    }
+                }
+            }
+        }
     }
 }
