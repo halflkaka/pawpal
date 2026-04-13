@@ -6,6 +6,213 @@ Entries are in reverse chronological order.
 
 ---
 
+## 2026-04-12 — Harden post image storage handling ([#10](https://github.com/halflkaka/pawpal/pull/10))
+
+### Summary
+
+Cleans up orphaned storage files when post creation rolls back or a post is deleted. Adds Supabase Storage RLS policies for the `post-images` bucket.
+
+5 files changed, +150 / -22 lines.
+
+### Changes
+
+#### Bug Fixes
+- **Storage rollback on create failure** — `createPost` tracks uploaded paths; on any failure after uploads have started, removes all successfully-uploaded objects before propagating the error
+- **Storage cleanup on delete** — `deletePost` removes associated storage objects before deleting the DB row; `storagePathsForPost` resolves actual paths from post image URLs, with a folder-prefix fallback
+- **Comment preview cleanup** — `deletePost` now clears `commentPreviews[postID]` to prevent stale data
+
+#### Infra
+- **`storagePathsForPost` helper** — parses public Supabase Storage URLs back to relative paths
+- **`supabase/012_add_post_images_storage_policies.sql`** — RLS policies for the `post-images` bucket
+
+### Files Changed
+
+| Folder | Files |
+|---|---|
+| `PawPal/Services/` | `PostsService.swift` |
+| `PawPal/Views/` | `CreatePostView.swift` |
+| `supabase/` | `012_add_post_images_storage_policies.sql` |
+| `docs/` | `known-issues.md` |
+
+---
+
+## 2026-04-12 — Remove duplicate feed avatar header ([#9](https://github.com/halflkaka/pawpal/pull/9))
+
+### Summary
+
+Removes a duplicate pet avatar and name block introduced during merge conflict resolution in PR #8. The `cardHeader` in `PostCard` was rendering both a standalone `petAvatarCircle` + `VStack` and the newer `petAvatarLink` wrapper.
+
+1 file changed, +0 / -43 lines.
+
+### Changes
+
+#### Bug Fixes
+- **Duplicate feed card header** — removed stale `petAvatarCircle` + name `VStack` from `cardHeader`; `petAvatarLink` is the correct single source
+
+### Files Changed
+
+| Folder | Files |
+|---|---|
+| `PawPal/Views/` | `FeedView.swift` |
+
+---
+
+## 2026-04-12 — Polish feed and profile UX ([#8](https://github.com/halflkaka/pawpal/pull/8))
+
+### Summary
+
+Adds inline comment previews to feed cards, smooths startup/auth transitions, and introduces direct delete for own posts and comments.
+
+8 files changed, +420 / -84 lines.
+
+### Changes
+
+#### UI
+- **Inline comment previews** — `PostCard` shows up to 2 recent comments inline (bold author name + content), a "查看全部 N 条评论" link, and an "添加评论…" prompt when empty
+- **Smooth auth transitions** — `ContentView` and `AuthManager` reduce flash-of-wrong-screen on startup and sign-in/sign-out
+- **Pet avatar in feed** — `petAvatarCircle` renders `AsyncImage` for `avatar_url` with emoji fallback
+
+#### Features
+- **Direct post/comment delete** — users can delete their own posts and comments from the feed and comments sheet; `CommentsView` gained per-comment delete
+
+#### Performance
+- **Comment preview tracking** — `PostsService` stores last 2 comment previews per post in a `@Published` dictionary so feed cards render them without extra queries
+
+### Files Changed
+
+| Folder | Files |
+|---|---|
+| `PawPal/Services/` | `AuthManager.swift`, `FollowService.swift`, `PostsService.swift` |
+| `PawPal/Views/` | `CommentsView.swift`, `ContentView.swift`, `FeedView.swift`, `MainTabView.swift`, `ProfileView.swift` |
+
+---
+
+## 2026-04-12 — Pet-first discovery tab ([#7](https://github.com/halflkaka/pawpal/pull/7))
+
+### Summary
+
+Adds a tab switcher (动态 Posts | 宠物 Pets) to the Discover tab. The Pets tab loads all pets from Supabase, filters by species (6 options), and shows a 2-column card grid. Tapping a card navigates to `PetProfileView`. Completes Phase 3.
+
+2 files changed, +168 / -5 lines.
+
+### Changes
+
+#### Features
+- **Pets tab in Discover** — `ContactsView` gains a tab switcher; Pets tab loads all public pets via `loadAllPets()` and shows a 2-column `PetDiscoverCard` grid
+- **Species filter** — 6-option filter row (全部, 狗狗, 猫咪, 兔子, 鸟类, 仓鼠); case-insensitive match against DB values
+- **Error state** — network failures show a distinct ⚠️ state instead of a misleading empty state
+- **Lazy loading** — pets only fetched on first tab switch; `isLoadingAll` guard prevents concurrent calls
+
+#### Services
+- **`PetsService.loadAllPets`** — queries all pets without owner filter (public RLS); sets `errorMessage` on failure
+
+### Files Changed
+
+| Folder | Files |
+|---|---|
+| `PawPal/Services/` | `PetsService.swift` |
+| `PawPal/Views/` | `ContactsView.swift` |
+
+---
+
+## 2026-04-12 — Pet avatar upload and display ([#6](https://github.com/halflkaka/pawpal/pull/6))
+
+### Summary
+
+Users can now set a photo for each pet via an image picker in the pet editor. Photos upload to Supabase Storage and display in the feed card header and profile pet bubble band. Falls back to species emoji when no avatar is set.
+
+5 files changed, +183 / -28 lines.
+
+### Changes
+
+#### Features
+- **Pet avatar picker** — `ProfilePetEditorSheet` gains a `PhotosPicker` header; shows picked image → existing URL → species emoji fallback
+- **Avatar upload** — `AvatarService` uploads to `{ownerID}/pet-avatar/{petID}.jpg`; resizes to 512px max edge at JPEG 0.82 quality; non-fatal (pet still saved if upload fails)
+- **Avatar display in feed** — `petAvatarLink` in `PostCard` renders `AsyncImage` for `avatar_url` with emoji fallback
+- **Avatar display in profile** — `petBubble` shows `AsyncImage` when `avatar_url` is set
+
+#### Bug Fixes
+- **Upload failure preserves existing avatar** — `updatePet` keeps the existing `avatar_url` if the new upload fails (was silently sending `null` to the DB)
+
+#### Services
+- **`AvatarService`** — new service for pet avatar upload
+- **`PetsService`** — `addPet` and `updatePet` accept optional `avatarData`
+
+### Files Changed
+
+| Folder | Files |
+|---|---|
+| `PawPal/Services/` | `AvatarService.swift`, `PetsService.swift` |
+| `PawPal/Models/` | `RemotePet.swift` |
+| `PawPal/Views/` | `FeedView.swift`, `PawPalDesignSystem.swift`, `ProfileView.swift` |
+
+---
+
+## 2026-04-12 — Pet profile pages ([#5](https://github.com/halflkaka/pawpal/pull/5))
+
+### Summary
+
+Adds a dedicated `PetProfileView` so tapping a pet's avatar or name anywhere in the app opens a full pet profile page. Navigation wired via `NavigationLink(value:)` + `.navigationDestination(for: RemotePet.self)`.
+
+4 files changed, +297 / -10 lines.
+
+### Changes
+
+#### Features
+- **`PetProfileView`** — species emoji header, tag pills (species/breed/age/sex/weight), home city, bio, post count stat, 2-column post grid filtered by `pet_id`
+- **Feed navigation** — tapping a pet avatar/name in `PostCard` pushes `PetProfileView`
+- **Profile navigation** — pet bubble context menu "查看主页" navigates to `PetProfileView` (uses `@State` trigger — `NavigationLink` inside `.contextMenu` is broken on iOS)
+
+#### Services
+- **`PostsService.loadPetPosts`** — 4-level select fallback, dedicated `isLoadingPetPosts` flag, `refreshLikes` + `refreshCommentCounts` pass; `petPosts` cleared on `deletePost`
+
+#### Models
+- **`RemotePet`** — add `Hashable` conformance (required for `NavigationLink(value:)`)
+
+### Files Changed
+
+| Folder | Files |
+|---|---|
+| `PawPal/Services/` | `PostsService.swift` |
+| `PawPal/Models/` | `RemotePet.swift` |
+| `PawPal/Views/` | `FeedView.swift`, `PetProfileView.swift`, `ProfileView.swift` |
+
+---
+
+## 2026-04-12 — Docs: conventions, structure, and changelog ([#4](https://github.com/halflkaka/pawpal/pull/4))
+
+### Summary
+
+Establishes the project's documentation structure: PR template, testing guide, product vision, decisions log, known issues, scope, and database reference. Updates CLAUDE.md and ROADMAP.md to reflect current state.
+
+22 files changed, +1469 / -276 lines.
+
+### Changes
+
+#### Docs
+- **`docs/conventions/pr-template.md`** — PR description standard with section guide and example
+- **`docs/testing.md`** — QA process: build, unit tests, UI tests, manual spot checks
+- **`docs/product.md`** — product vision, target user, core principles
+- **`docs/decisions.md`** — architectural and product decisions log
+- **`docs/known-issues.md`** — known bugs and tech debt
+- **`docs/scope.md`** — what is in scope, deferred, and off-limits
+- **`docs/database.md`** — schema reference (renamed from `DB_SCHEMA.md`)
+- **`CHANGELOG.md`** — retroactive entries for PRs #1–#3
+- **`CLAUDE.md`** — updated with full conventions, agent workflow config, code conventions
+- **`ROADMAP.md`** — updated to reflect actual current state per phase
+- **`.claude/agents/dev-team.md`** — agent team role configs
+
+### Files Changed
+
+| Folder | Files |
+|---|---|
+| `docs/` | `database.md`, `decisions.md`, `known-issues.md`, `product.md`, `scope.md`, `testing.md` |
+| `docs/conventions/` | `pr-template.md` |
+| `.claude/agents/` | `dev-team.md` |
+| (root) | `CHANGELOG.md`, `CLAUDE.md`, `ROADMAP.md`, `README.md` |
+
+---
+
 ## 2026-04-12 — Fix like persistence across fresh sessions ([#3](https://github.com/halflkaka/pawpal/pull/3))
 
 ### Summary

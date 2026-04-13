@@ -29,7 +29,7 @@ Never commit directly to `main`.
 
 ## Pull Requests
 
-Always follow the template at `docs/pr-template.md`.
+Always follow the template at `docs/conventions/pr-template.md`.
 
 Key rules:
 - Include a 1-2 sentence Summary with line count (`X files, +Y / -Z lines`)

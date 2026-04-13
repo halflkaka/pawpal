@@ -20,19 +20,20 @@ Phases 1 and 2 are complete. Phase 3 is partially done. Phases 4–6 are upcomin
 - Feed filtered to followed users + self
 - ⚠️ Notification badges not yet implemented
 
-## Phase 3 — Discovery ⚠️ Partial
+## Phase 3 — Discovery ✅ Complete
 
 - `ContactsView` loads real posts and supports filtering by mood and species
 - Search works client-side across pet name, species, breed, city, caption, mood
 - Trending topics derived dynamically from real post data
-- 🔲 True pet-first explore (browse by breed, find pets near you) not yet built — current discovery is post-based filtering, not pet-based browsing
+- Pet-first explore tab in `ContactsView` — browse all pets by species, tap to open pet profile (PR #7)
 
-## Phase 4 — Pet Profiles as First-Class Pages 🔲 Not started
+## Phase 4 — Pet Profiles as First-Class Pages ⚠️ Partial
 
 - Pet management (add, edit, delete) is fully real in `ProfileView`
-- 🔲 Dedicated pet profile page — tap a pet to see its photo, bio, stats, post grid
+- Dedicated pet profile page — tap a pet's avatar or name to open `PetProfileView` (bio, tags, post grid) (PR #5)
+- Pet avatar upload — photo picker in pet editor, uploads to Supabase Storage, displayed in feed and profile (PR #6)
 - 🔲 Pet-specific follow (follow a pet, not just a user)
-- 🔲 Profile photo upload for user avatars and pet avatars
+- 🔲 Profile photo upload for user (non-pet) avatars
 
 ## Phase 5 — Messaging 🔲 Stub only
 
