@@ -135,8 +135,8 @@ struct ProfileView: View {
                 fallbackDisplayName: fallbackName,
                 isSaving: isSavingProfile,
                 errorMessage: profileErrorMessage
-            ) { username, displayName, bio in
-                await saveProfile(username: username, displayName: displayName, bio: bio)
+            ) { username, displayName, bio, avatarData in
+                await saveProfile(username: username, displayName: displayName, bio: bio, avatarData: avatarData)
             }
         }
         .alert("删除宠物？", isPresented: deleteAlertBinding, presenting: pendingDeletePet) { pet in
@@ -220,9 +220,23 @@ struct ProfileView: View {
                     )
                     .frame(width: 88, height: 88)
                     .shadow(color: PawPalTheme.orange.opacity(0.32), radius: 18, y: 8)
-                Image(systemName: "person.fill")
-                    .font(.system(size: 38, weight: .medium))
-                    .foregroundStyle(.white)
+                if let urlStr = profile?.avatar_url, let url = URL(string: urlStr) {
+                    AsyncImage(url: url) { phase in
+                        if case .success(let img) = phase {
+                            img.resizable().scaledToFill()
+                                .frame(width: 88, height: 88)
+                                .clipShape(Circle())
+                        } else {
+                            Image(systemName: "person.fill")
+                                .font(.system(size: 38, weight: .medium))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                } else {
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 38, weight: .medium))
+                        .foregroundStyle(.white)
+                }
             }
 
             // Name + handle + bio
@@ -628,14 +642,15 @@ struct ProfileView: View {
         }
     }
 
-    private func saveProfile(username: String, displayName: String, bio: String) async -> Bool {
+    private func saveProfile(username: String, displayName: String, bio: String, avatarData: Data? = nil) async -> Bool {
         guard !isSavingProfile else { return false }
         isSavingProfile = true
         profileErrorMessage = nil
         defer { isSavingProfile = false }
         do {
             profile = try await profileService.saveProfile(
-                for: user.id, username: username, displayName: displayName, bio: bio
+                for: user.id, username: username, displayName: displayName, bio: bio,
+                currentAvatarURL: profile?.avatar_url, avatarData: avatarData
             )
             await authManager.refreshCurrentProfile()
             statusMessage = "账号已更新"
@@ -1115,12 +1130,17 @@ private struct ProfileAccountEditorSheet: View {
     @State private var username: String
     @State private var displayName: String
     @State private var bio: String
+    @State private var pickedAvatarItem: PhotosPickerItem?
+    @State private var pickedAvatarData: Data?
+    @State private var pickedAvatarImage: Image?
 
+    let existingAvatarURL: String?
     let isSaving: Bool
     let errorMessage: String?
-    let onSave: (String, String, String) async -> Bool
+    let onSave: (String, String, String, Data?) async -> Bool
 
-    init(profile: RemoteProfile, fallbackDisplayName: String, isSaving: Bool, errorMessage: String?, onSave: @escaping (String, String, String) async -> Bool) {
+    init(profile: RemoteProfile, fallbackDisplayName: String, isSaving: Bool, errorMessage: String?, onSave: @escaping (String, String, String, Data?) async -> Bool) {
+        self.existingAvatarURL = profile.avatar_url
         self.isSaving     = isSaving
         self.errorMessage = errorMessage
         self.onSave       = onSave
@@ -1136,15 +1156,60 @@ private struct ProfileAccountEditorSheet: View {
 
                 ScrollView {
                     VStack(spacing: 20) {
-                        // Header
+                        // Header with avatar picker
                         VStack(spacing: 12) {
-                            ZStack {
-                                Circle()
-                                    .fill(PawPalTheme.cardSoft)
-                                    .frame(width: 72, height: 72)
-                                Image(systemName: "person.crop.circle.fill")
-                                    .font(.system(size: 30))
-                                    .foregroundStyle(PawPalTheme.orange)
+                            PhotosPicker(
+                                selection: $pickedAvatarItem,
+                                matching: .images,
+                                photoLibrary: .shared()
+                            ) {
+                                ZStack(alignment: .bottomTrailing) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(LinearGradient(
+                                                colors: [PawPalTheme.orange, PawPalTheme.orangeSoft],
+                                                startPoint: .topLeading, endPoint: .bottomTrailing))
+                                            .frame(width: 80, height: 80)
+                                        if let pickedAvatarImage {
+                                            pickedAvatarImage
+                                                .resizable().scaledToFill()
+                                                .frame(width: 80, height: 80)
+                                                .clipShape(Circle())
+                                        } else if let urlStr = existingAvatarURL, let url = URL(string: urlStr) {
+                                            AsyncImage(url: url) { phase in
+                                                if case .success(let img) = phase {
+                                                    img.resizable().scaledToFill()
+                                                        .frame(width: 80, height: 80)
+                                                        .clipShape(Circle())
+                                                } else {
+                                                    Image(systemName: "person.fill")
+                                                        .font(.system(size: 32, weight: .medium))
+                                                        .foregroundStyle(.white)
+                                                }
+                                            }
+                                        } else {
+                                            Image(systemName: "person.fill")
+                                                .font(.system(size: 32, weight: .medium))
+                                                .foregroundStyle(.white)
+                                        }
+                                    }
+                                    Image(systemName: "camera.fill")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 26, height: 26)
+                                        .background(PawPalTheme.orange, in: Circle())
+                                        .offset(x: 4, y: 4)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .onChange(of: pickedAvatarItem) { _, item in
+                                Task {
+                                    guard let data = try? await item?.loadTransferable(type: Data.self) else { return }
+                                    pickedAvatarData = data
+                                    if let uiImage = UIImage(data: data) {
+                                        pickedAvatarImage = Image(uiImage: uiImage)
+                                    }
+                                }
                             }
                             Text("编辑账号")
                                 .font(.system(size: 22, weight: .bold, design: .rounded))
@@ -1196,7 +1261,7 @@ private struct ProfileAccountEditorSheet: View {
                         // Save button
                         Button {
                             Task {
-                                let ok = await onSave(username, displayName, bio)
+                                let ok = await onSave(username, displayName, bio, pickedAvatarData)
                                 if ok { dismiss() }
                             }
                         } label: {
