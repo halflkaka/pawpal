@@ -18,7 +18,6 @@ struct ProfileView: View {
     @State private var statusMessage: String?
     @State private var followerCount = 0
     @State private var isLoadingAll = false
-    @State private var viewingPost: RemotePost?
     @State private var petToView: RemotePet?
     /// Called when the user taps "创建首条帖子" — switches to the Create tab.
     var onCreatePost: (() -> Void)? = nil
@@ -51,13 +50,35 @@ struct ProfileView: View {
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top) { topBar }
         .navigationDestination(for: RemotePet.self) { pet in
-            PetProfileView(pet: pet)
+            PetProfileView(
+                pet: pet,
+                currentUserID: user.id,
+                currentUserDisplayName: accountDisplayName,
+                currentUsername: profile?.username
+            )
         }
         .navigationDestination(isPresented: Binding(
             get: { petToView != nil },
             set: { if !$0 { petToView = nil } }
         )) {
-            if let pet = petToView { PetProfileView(pet: pet) }
+            if let pet = petToView {
+                PetProfileView(
+                    pet: pet,
+                    currentUserID: user.id,
+                    currentUserDisplayName: accountDisplayName,
+                    currentUsername: profile?.username
+                )
+            }
+        }
+        .navigationDestination(for: RemotePost.self) { post in
+            PostDetailView(
+                post: post,
+                currentUserID: user.id,
+                isOwnPost: post.owner_user_id == user.id,
+                currentUserDisplayName: accountDisplayName,
+                currentUsername: profile?.username,
+                postsService: postsService
+            )
         }
         .task { await loadAll() }
         .refreshable { await loadAll() }
@@ -117,17 +138,6 @@ struct ProfileView: View {
             ) { username, displayName, bio in
                 await saveProfile(username: username, displayName: displayName, bio: bio)
             }
-        }
-        .sheet(item: $viewingPost) { post in
-            CommentsView(
-                postID: post.id,
-                currentUserID: user.id,
-                currentUserDisplayName: profile?.display_name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                    ? profile!.display_name!
-                    : (user.displayName ?? user.email?.components(separatedBy: "@").first ?? "用户"),
-                currentUsername: profile?.username,
-                postsService: postsService
-            )
         }
         .alert("删除宠物？", isPresented: deleteAlertBinding, presenting: pendingDeletePet) { pet in
             Button("删除", role: .destructive) {
@@ -523,7 +533,10 @@ struct ProfileView: View {
     private var realPostsGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
             ForEach(postsService.userPosts) { post in
-                profilePostCard(post)
+                NavigationLink(value: post) {
+                    profilePostCard(post)
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 20)
@@ -569,7 +582,6 @@ struct ProfileView: View {
         .background(Color.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .shadow(color: PawPalTheme.shadow, radius: 8, y: 4)
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .onTapGesture { viewingPost = post }
     }
 
     private func profilePostPlaceholder(height: CGFloat, icon: String?) -> some View {

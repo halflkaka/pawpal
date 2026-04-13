@@ -1,6 +1,8 @@
 import Foundation
 
-struct RemotePost: Identifiable, Codable {
+struct RemotePost: Identifiable, Codable, Hashable {
+    static func == (lhs: RemotePost, rhs: RemotePost) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
     let id: UUID
     let owner_user_id: UUID          // matches posts table column name
     let pet_id: UUID
