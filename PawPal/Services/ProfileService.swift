@@ -14,6 +14,7 @@ struct ProfileUpsertPayload: Encodable {
     let username: String?
     let display_name: String?
     let bio: String?
+    let avatar_url: String?
 }
 
 struct ProfileService {
@@ -37,7 +38,14 @@ struct ProfileService {
         }
     }
 
-    func saveProfile(for userID: UUID, username: String, displayName: String, bio: String) async throws -> RemoteProfile {
+    func saveProfile(
+        for userID: UUID,
+        username: String,
+        displayName: String,
+        bio: String,
+        currentAvatarURL: String? = nil,
+        avatarData: Data? = nil
+    ) async throws -> RemoteProfile {
         let normalizedUsername = normalizeOptional(username)
         let normalizedDisplayName = normalizeOptional(displayName)
         let normalizedBio = normalizeOptional(bio)
@@ -46,11 +54,21 @@ struct ProfileService {
             throw ProfileError(message: "Username is required.")
         }
 
+        var finalAvatarURL: String? = currentAvatarURL
+        if let avatarData {
+            if let uploaded = try? await AvatarService().uploadUserAvatar(data: avatarData, userID: userID) {
+                finalAvatarURL = uploaded
+            } else {
+                print("[ProfileService] avatar upload 失败 — keeping existing URL")
+            }
+        }
+
         let payload = ProfileUpsertPayload(
             id: userID,
             username: normalizedUsername.lowercased(),
             display_name: normalizedDisplayName,
-            bio: normalizedBio
+            bio: normalizedBio,
+            avatar_url: finalAvatarURL
         )
 
         do {
