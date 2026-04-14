@@ -2,7 +2,22 @@ import SwiftUI
 
 struct PetProfileView: View {
     let pet: RemotePet
+    let currentUserID: UUID?
+    let currentUserDisplayName: String
+    let currentUsername: String?
     @StateObject private var postsService = PostsService()
+
+    init(
+        pet: RemotePet,
+        currentUserID: UUID? = nil,
+        currentUserDisplayName: String = "用户",
+        currentUsername: String? = nil
+    ) {
+        self.pet = pet
+        self.currentUserID = currentUserID
+        self.currentUserDisplayName = currentUserDisplayName
+        self.currentUsername = currentUsername
+    }
 
     var body: some View {
         ScrollView {
@@ -16,6 +31,16 @@ struct PetProfileView: View {
         .background(PawPalBackground())
         .navigationTitle(pet.name)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(for: RemotePost.self) { post in
+            PostDetailView(
+                post: post,
+                currentUserID: currentUserID,
+                isOwnPost: post.owner_user_id == currentUserID,
+                currentUserDisplayName: currentUserDisplayName,
+                currentUsername: currentUsername,
+                postsService: postsService
+            )
+        }
         .refreshable { await postsService.loadPetPosts(for: pet.id) }
         .task { await postsService.loadPetPosts(for: pet.id) }
     }
@@ -182,7 +207,10 @@ struct PetProfileView: View {
             spacing: 10
         ) {
             ForEach(postsService.petPosts) { post in
-                petPostTile(post)
+                NavigationLink(value: post) {
+                    petPostTile(post)
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 20)

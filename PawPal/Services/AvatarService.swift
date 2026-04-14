@@ -9,6 +9,15 @@ struct AvatarService {
     // user's own folder prefix (satisfying existing RLS policies).
     private let bucket = "post-images"
 
+    func uploadUserAvatar(data: Data, userID: UUID) async throws -> String {
+        let path = "\(userID.uuidString)/user-avatar/\(userID.uuidString).jpg"
+        let jpeg = compress(data)
+        _ = try await client.storage
+            .from(bucket)
+            .upload(path, data: jpeg, options: FileOptions(contentType: "image/jpeg", upsert: true))
+        return try client.storage.from(bucket).getPublicURL(path: path).absoluteString
+    }
+
     func uploadPetAvatar(data: Data, ownerID: UUID, petID: UUID) async throws -> String {
         let path = "\(ownerID.uuidString)/pet-avatar/\(petID.uuidString).jpg"
         let jpeg = compress(data)

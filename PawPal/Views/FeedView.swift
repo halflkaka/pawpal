@@ -45,22 +45,25 @@ struct FeedView: View {
                     emptyFeed
                 } else {
                     ForEach(postsService.feedPosts, id: \.id) { post in
-                        PostCard(
-                            post: post,
-                            currentUserID: myID,
-                            commentCount: postsService.commentCount(for: post.id),
-                            commentPreviews: postsService.commentPreviews[post.id] ?? [],
-                            isFollowingOwner: followService.isFollowing(post.owner_user_id),
-                            isOwnPost: post.owner_user_id == myID,
-                            onLike: {
-                                if let uid = myID {
-                                    await postsService.toggleLike(postID: post.id, userID: uid)
-                                }
-                            },
-                            onComment: { commentingPost = post },
-                            onFollow: { await followService.toggleFollow(targetID: post.owner_user_id) },
-                            onDelete: { pendingDeletePost = post }
-                        )
+                        NavigationLink(value: post) {
+                            PostCard(
+                                post: post,
+                                currentUserID: myID,
+                                commentCount: postsService.commentCount(for: post.id),
+                                commentPreviews: postsService.commentPreviews[post.id] ?? [],
+                                isFollowingOwner: followService.isFollowing(post.owner_user_id),
+                                isOwnPost: post.owner_user_id == myID,
+                                onLike: {
+                                    if let uid = myID {
+                                        await postsService.toggleLike(postID: post.id, userID: uid)
+                                    }
+                                },
+                                onComment: { commentingPost = post },
+                                onFollow: { await followService.toggleFollow(targetID: post.owner_user_id) },
+                                onDelete: { pendingDeletePost = post }
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -145,7 +148,26 @@ struct FeedView: View {
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
         .navigationDestination(for: RemotePet.self) { pet in
-            PetProfileView(pet: pet)
+            PetProfileView(
+                pet: pet,
+                currentUserID: myID,
+                currentUserDisplayName: authManager.currentProfile?.display_name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    ? authManager.currentProfile!.display_name!
+                    : (authManager.currentUser?.displayName ?? authManager.currentUser?.email?.components(separatedBy: "@").first ?? "用户"),
+                currentUsername: authManager.currentProfile?.username
+            )
+        }
+        .navigationDestination(for: RemotePost.self) { post in
+            PostDetailView(
+                post: post,
+                currentUserID: myID,
+                isOwnPost: post.owner_user_id == myID,
+                currentUserDisplayName: authManager.currentProfile?.display_name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    ? authManager.currentProfile!.display_name!
+                    : (authManager.currentUser?.displayName ?? authManager.currentUser?.email?.components(separatedBy: "@").first ?? "用户"),
+                currentUsername: authManager.currentProfile?.username,
+                postsService: postsService
+            )
         }
         .alert("删除这条动态？", isPresented: deletePostAlertBinding, presenting: pendingDeletePost) { post in
             Button("删除", role: .destructive) {

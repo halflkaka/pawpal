@@ -20,12 +20,12 @@ Phases 1 and 2 are complete. Phase 3 is partially done. Phases 4–6 are upcomin
 - Feed filtered to followed users + self
 - ⚠️ Notification badges not yet implemented
 
-## Phase 3 — Discovery ⚠️ Partial
+## Phase 3 — Discovery ✅ Complete
 
 - `ContactsView` loads real posts and supports filtering by mood and species
 - Search works client-side across pet name, species, breed, city, caption, mood
 - Trending topics derived dynamically from real post data
-- 🔲 True pet-first explore (browse by breed, find pets near you) not yet built — current discovery is post-based filtering, not pet-based browsing
+- Pet-first explore tab in `ContactsView` — browse all pets by species, tap to open pet profile (PR #7)
 
 ## Phase 4 — Pet Profiles as First-Class Pages ⚠️ Partial
 
