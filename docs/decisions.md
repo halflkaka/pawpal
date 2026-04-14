@@ -76,4 +76,14 @@ Each entry: what was decided, why, and what it means going forward.
 
 ---
 
+## MapKit for city autocomplete in pet editor
+
+**Decision:** The pet editor's home city field uses `MKLocalSearchCompleter` (MapKit) rather than a plain `TextField`.
+
+**Why:** Free-text city entry produced inconsistent values (different spellings, missing regions) that are hard to display or query against. `MKLocalSearchCompleter` returns structured, real-world place names that are consistent and user-friendly to select.
+
+**Implications:** `MapKit` is now a dependency of `ProfileView.swift`. The `LocationCompleter` class and `LocationPickerSheet` view live at the bottom of that file. Do not duplicate location search logic elsewhere — extract to a shared file if needed in more places.
+
+---
+
 _Add new entries here when significant architectural, product, or design decisions are made. Changelog captures what changed; this captures why._
