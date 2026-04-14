@@ -172,8 +172,21 @@ struct CreatePostView: View {
                     Circle()
                         .fill(isSelected ? PawPalTheme.orange : PawPalTheme.cardSoft)
                         .frame(width: 38, height: 38)
-                    Text(speciesEmoji(for: pet.species ?? ""))
-                        .font(.system(size: 18))
+                    if let urlStr = pet.avatar_url, let url = URL(string: urlStr) {
+                        AsyncImage(url: url) { phase in
+                            if case .success(let img) = phase {
+                                img.resizable().scaledToFill()
+                                    .frame(width: 38, height: 38)
+                                    .clipShape(Circle())
+                            } else {
+                                Text(speciesEmoji(for: pet.species ?? ""))
+                                    .font(.system(size: 18))
+                            }
+                        }
+                    } else {
+                        Text(speciesEmoji(for: pet.species ?? ""))
+                            .font(.system(size: 18))
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
