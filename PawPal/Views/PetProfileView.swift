@@ -45,24 +45,51 @@ struct PetProfileView: View {
         .task { await postsService.loadPetPosts(for: pet.id) }
     }
 
-    // MARK: - Header
+    // MARK: - Avatar
 
-    private var petHeader: some View {
-        VStack(spacing: 16) {
-            // Avatar
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(
-                        colors: [PawPalTheme.orange.opacity(0.28), PawPalTheme.cardSoft],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ))
-                    .frame(width: 96, height: 96)
-                    .shadow(color: PawPalTheme.orange.opacity(0.22), radius: 18, y: 8)
+    private var petAvatar: some View {
+        ZStack {
+            Circle()
+                .fill(LinearGradient(
+                    colors: [PawPalTheme.orange.opacity(0.28), PawPalTheme.cardSoft],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ))
+                .frame(width: 96, height: 96)
+                .shadow(color: PawPalTheme.orange.opacity(0.22), radius: 18, y: 8)
+
+            if let urlString = pet.avatar_url, let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 96, height: 96)
+                            .clipShape(Circle())
+                    case .failure:
+                        Text(speciesEmoji(for: pet.species ?? ""))
+                            .font(.system(size: 48))
+                    default:
+                        ProgressView()
+                            .frame(width: 96, height: 96)
+                    }
+                }
+            } else {
                 Text(speciesEmoji(for: pet.species ?? ""))
                     .font(.system(size: 48))
             }
-            .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.35), lineWidth: 3))
+        }
+        .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.35), lineWidth: 3))
+    }
+
+    // MARK: - Header
+
+    private var petHeader: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Avatar — explicitly centered despite leading VStack
+            petAvatar
+                .frame(maxWidth: .infinity, alignment: .center)
 
             // Name
             Text(pet.name)
@@ -79,16 +106,15 @@ struct PetProfileView: View {
                         PawPalPill(text: breed, systemImage: nil, tint: PawPalTheme.secondaryText)
                     }
                     if let age = pet.age, !age.isEmpty {
-                        PawPalPill(text: age, systemImage: "calendar", tint: PawPalTheme.tertiaryText)
+                        PawPalPill(text: withUnit(age, defaultUnit: "岁"), systemImage: "calendar", tint: PawPalTheme.tertiaryText)
                     }
                     if let sex = pet.sex, !sex.isEmpty {
-                        PawPalPill(text: sex, systemImage: nil, tint: PawPalTheme.tertiaryText)
+                        PawPalPill(text: localizedSex(sex), systemImage: nil, tint: PawPalTheme.tertiaryText)
                     }
                     if let weight = pet.weight, !weight.isEmpty {
-                        PawPalPill(text: weight, systemImage: "scalemass", tint: PawPalTheme.tertiaryText)
+                        PawPalPill(text: withUnit(weight, defaultUnit: "公斤"), systemImage: "scalemass", tint: PawPalTheme.tertiaryText)
                     }
                 }
-                .padding(.horizontal, 20)
             }
 
             // City
@@ -107,9 +133,8 @@ struct PetProfileView: View {
                 Text(bio)
                     .font(.system(size: 14))
                     .foregroundStyle(PawPalTheme.secondaryText)
-                    .multilineTextAlignment(.center)
                     .lineSpacing(3)
-                    .padding(.horizontal, 24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             // Stats
@@ -257,6 +282,24 @@ struct PetProfileView: View {
         case "hamster": return "🐹"
         case "fish": return "🐟"
         default: return "🐾"
+        }
+    }
+
+    /// Ensures a numeric-only value (e.g. "3", "25") gets a unit appended.
+    /// Values that already contain a CJK character (i.e. the unit is already there,
+    /// e.g. "3 岁", "3个月", "25 公斤") are returned unchanged.
+    private func withUnit(_ value: String, defaultUnit: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+        let hasCJK = trimmed.unicodeScalars.contains { $0.value >= 0x4E00 && $0.value <= 0x9FFF }
+        return hasCJK ? trimmed : "\(trimmed) \(defaultUnit)"
+    }
+
+    private func localizedSex(_ sex: String) -> String {
+        switch sex {
+        case "Male":   return "公"
+        case "Female": return "母"
+        default:       return sex
         }
     }
 

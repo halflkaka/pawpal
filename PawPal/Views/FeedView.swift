@@ -419,8 +419,23 @@ struct PostCard: View {
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     ))
                     .frame(width: 44, height: 44)
-                Text(speciesEmoji(for: post.pet?.species ?? ""))
-                    .font(.system(size: 22))
+
+                if let urlString = post.pet?.avatar_url, let url = URL(string: urlString) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFill()
+                                .frame(width: 44, height: 44)
+                                .clipShape(Circle())
+                        default:
+                            Text(speciesEmoji(for: post.pet?.species ?? ""))
+                                .font(.system(size: 22))
+                        }
+                    }
+                } else {
+                    Text(speciesEmoji(for: post.pet?.species ?? ""))
+                        .font(.system(size: 22))
+                }
             }
             .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.4), lineWidth: 2))
 
@@ -574,11 +589,6 @@ struct PostCard: View {
             }
             .buttonStyle(.plain)
 
-            Button(action: onComment) {
-                reactionChip(icon: "pawprint.fill", label: "贴贴")
-            }
-            .buttonStyle(.plain)
-
             Spacer()
         }
     }
@@ -632,7 +642,7 @@ struct PostCard: View {
         .foregroundStyle(PawPalTheme.secondaryText)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(PawPalTheme.background, in: Capsule())
+        .background(PawPalTheme.cardSoft, in: Capsule())
     }
 
     // MARK: - Helpers
