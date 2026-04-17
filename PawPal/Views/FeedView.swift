@@ -76,7 +76,26 @@ struct FeedView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
-        .refreshable { await refreshFeed() }
+        .refreshable {
+            // Timeout guard: if the network hangs, the spinner still
+            // dismisses after 8s instead of spinning forever.
+            let service = postsService
+            let uid = myID
+            var filterIDs: [UUID]? = nil
+            if let uid, isFiltered {
+                filterIDs = followService.feedFilter(includingSelf: uid)
+            }
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    await service.loadFeed(followingIDs: filterIDs, currentUserID: uid)
+                }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                }
+                _ = await group.next()
+                group.cancelAll()
+            }
+        }
         .task {
             // Don't attempt any network calls while the Supabase session is still
             // being restored — authenticated requests would fail or return empty
@@ -216,9 +235,9 @@ struct FeedView: View {
 
     private func refreshFeed() async {
         if let uid = myID, isFiltered {
-            await postsService.loadFeed(followingIDs: followService.feedFilter(includingSelf: uid))
+            await postsService.loadFeed(followingIDs: followService.feedFilter(includingSelf: uid), currentUserID: uid)
         } else {
-            await postsService.loadFeed()
+            await postsService.loadFeed(currentUserID: myID)
         }
     }
 
@@ -274,7 +293,7 @@ struct FeedView: View {
                 .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(PawPalTheme.primaryText)
                 .frame(width: 38, height: 38)
-                .background(.white, in: Circle())
+                .background(PawPalTheme.card, in: Circle())
                 .shadow(color: PawPalTheme.shadow, radius: 8, y: 4)
             if badge {
                 Circle().fill(Color.red).frame(width: 9, height: 9).offset(x: -2, y: 2)
@@ -301,26 +320,49 @@ struct FeedView: View {
 
     private var feedSkeleton: some View {
         VStack(spacing: 18) {
-            ForEach(0..<3, id: \.self) { _ in skeletonCard }
+            ForEach(0..<3, id: \.self) { _ in SkeletonCard() }
+        }
+    }
+}
+
+// MARK: - Shimmer Skeleton
+
+private struct SkeletonCard: View {
+    @State private var shimmerOffset: CGFloat = -1.0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Circle().fill(shimmerGradient).frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 6) {
+                    RoundedRectangle(cornerRadius: 4).fill(shimmerGradient).frame(width: 120, height: 14)
+                    RoundedRectangle(cornerRadius: 4).fill(shimmerGradient).frame(width: 80, height: 11)
+                }
+            }
+            RoundedRectangle(cornerRadius: 4).fill(shimmerGradient).frame(maxWidth: .infinity).frame(height: 14)
+            RoundedRectangle(cornerRadius: 4).fill(shimmerGradient).frame(width: 200, height: 14)
+            RoundedRectangle(cornerRadius: 20).fill(shimmerGradient).frame(maxWidth: .infinity).frame(height: 200)
+        }
+        .padding(16)
+        .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .shadow(color: PawPalTheme.softShadow, radius: 8, y: 3)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: false)) {
+                shimmerOffset = 1.0
+            }
         }
     }
 
-    private var skeletonCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                Circle().fill(PawPalTheme.cardSoft).frame(width: 44, height: 44)
-                VStack(alignment: .leading, spacing: 6) {
-                    RoundedRectangle(cornerRadius: 4).fill(PawPalTheme.cardSoft).frame(width: 120, height: 14)
-                    RoundedRectangle(cornerRadius: 4).fill(PawPalTheme.cardSoft).frame(width: 80, height: 11)
-                }
-            }
-            RoundedRectangle(cornerRadius: 4).fill(PawPalTheme.cardSoft).frame(maxWidth: .infinity).frame(height: 14)
-            RoundedRectangle(cornerRadius: 4).fill(PawPalTheme.cardSoft).frame(width: 200, height: 14)
-            RoundedRectangle(cornerRadius: 20).fill(PawPalTheme.cardSoft).frame(maxWidth: .infinity).frame(height: 200)
-        }
-        .padding(16)
-        .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .redacted(reason: .placeholder)
+    private var shimmerGradient: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: PawPalTheme.cardSoft, location: max(0, shimmerOffset - 0.3)),
+                .init(color: PawPalTheme.cardSoft.opacity(0.4), location: shimmerOffset),
+                .init(color: PawPalTheme.cardSoft, location: min(1, shimmerOffset + 0.3))
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 }
 
@@ -341,6 +383,8 @@ struct PostCard: View {
 
     @State private var likeAnimating = false
     @State private var followAnimating = false
+    @State private var captionExpanded = false
+    @State private var showDoubleTapHeart = false
 
     private var isLiked: Bool {
         guard let uid = currentUserID else { return false }
@@ -352,9 +396,6 @@ struct PostCard: View {
             cardHeader
             captionText
             if !post.imageURLs.isEmpty { imageSection }
-            if let mood = post.mood, !mood.isEmpty {
-                PawPalPill(text: mood, systemImage: "sparkles", tint: PawPalTheme.orangeSoft)
-            }
             reactionRow
             if commentCount > 0 || !commentPreviews.isEmpty {
                 commentPreviewSection
@@ -371,15 +412,17 @@ struct PostCard: View {
             Spacer()
 
             if isOwnPost {
-                Button(action: onDelete) {
-                    Label("删除", systemImage: "trash")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(.red)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.red.opacity(0.08), in: Capsule())
+                Menu {
+                    Button(role: .destructive, action: onDelete) {
+                        Label("删除动态", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(PawPalTheme.tertiaryText)
+                        .frame(width: 32, height: 32)
+                        .background(PawPalTheme.cardSoft, in: Circle())
                 }
-                .buttonStyle(.plain)
             }
 
             // Follow button — only visible on other people's posts
@@ -412,32 +455,13 @@ struct PostCard: View {
 
     private var petAvatarLink: some View {
         let avatarAndInfo = HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(
-                        colors: [PawPalTheme.orange.opacity(0.25), PawPalTheme.cardSoft],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    ))
-                    .frame(width: 44, height: 44)
-
-                if let urlString = post.pet?.avatar_url, let url = URL(string: urlString) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFill()
-                                .frame(width: 44, height: 44)
-                                .clipShape(Circle())
-                        default:
-                            Text(speciesEmoji(for: post.pet?.species ?? ""))
-                                .font(.system(size: 22))
-                        }
-                    }
-                } else {
-                    Text(speciesEmoji(for: post.pet?.species ?? ""))
-                        .font(.system(size: 22))
-                }
-            }
-            .overlay(Circle().stroke(PawPalTheme.orange.opacity(0.4), lineWidth: 2))
+            PawPalAvatar(
+                emoji: speciesEmoji(for: post.pet?.species ?? ""),
+                imageURL: post.pet?.avatar_url,
+                size: 44,
+                background: PawPalTheme.cardSoft,
+                ringColor: PawPalTheme.orange.opacity(0.4)
+            )
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -448,9 +472,19 @@ struct PostCard: View {
                         PawPalPill(text: speciesDisplayName(species), systemImage: nil, tint: PawPalTheme.orange.opacity(0.7))
                     }
                 }
-                Text(relativeTime(from: post.created_at))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(relativeTime(from: post.created_at))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(PawPalTheme.tertiaryText)
+                    if let mood = post.mood, !mood.isEmpty {
+                        Text("·")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(PawPalTheme.tertiaryText)
+                        Text(mood)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(PawPalTheme.orangeSoft)
+                    }
+                }
             }
         }
 
@@ -469,20 +503,59 @@ struct PostCard: View {
     // MARK: - Caption
 
     private var captionText: some View {
-        Text(post.caption)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(PawPalTheme.primaryText)
-            .lineSpacing(3)
-            .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(post.caption)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(PawPalTheme.primaryText)
+                .lineSpacing(4)
+                .lineLimit(captionExpanded ? nil : 3)
+
+            if !captionExpanded && post.caption.count > 80 {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { captionExpanded = true }
+                } label: {
+                    Text("展开")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.secondaryText)
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     // MARK: - Images
 
     private var imageSection: some View {
         let urls = post.imageURLs
-        return LazyVStack(spacing: 0) {
-            if urls.count == 1 { singleImage(url: urls[0]) }
-            else { imageGrid(urls: urls) }
+        return ZStack {
+            LazyVStack(spacing: 0) {
+                if urls.count == 1 { singleImage(url: urls[0]) }
+                else { imageGrid(urls: urls) }
+            }
+            .onTapGesture(count: 2) {
+                guard !isLiked else { return }
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Task { await onLike() }
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.5)) {
+                    showDoubleTapHeart = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        showDoubleTapHeart = false
+                    }
+                }
+            }
+
+            // Heart burst overlay
+            if showDoubleTapHeart {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 64))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.3), radius: 8, y: 2)
+                    .scaleEffect(showDoubleTapHeart ? 1.0 : 0.3)
+                    .opacity(showDoubleTapHeart ? 1.0 : 0.0)
+                    .transition(.scale.combined(with: .opacity))
+            }
         }
     }
 
@@ -491,21 +564,17 @@ struct PostCard: View {
             switch phase {
             case .success(let img):
                 img.resizable().scaledToFill()
-                    .frame(maxWidth: .infinity).frame(height: 240).clipped()
+                    .frame(maxWidth: .infinity).frame(height: 260).clipped()
                     .overlay(alignment: .bottom) {
-                        LinearGradient(
-                            colors: [Color.black.opacity(0.0), Color.black.opacity(0.28)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: 100)
-                        .allowsHitTesting(false)
+                        PawPalTheme.gradientImageOverlay
+                            .frame(height: 80)
+                            .allowsHitTesting(false)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             case .failure:
-                imagePlaceholder(height: 240, failed: true)
+                imagePlaceholder(height: 260, failed: true)
             default:
-                imagePlaceholder(height: 240)
+                imagePlaceholder(height: 260)
             }
         }
     }
@@ -516,21 +585,32 @@ struct PostCard: View {
 
     private func imageGrid(urls: [URL]) -> some View {
         let cols = gridColumns(for: urls.count)
-        return LazyVGrid(columns: cols, spacing: 6) {
-            ForEach(Array(urls.enumerated()), id: \.offset) { _, url in
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().scaledToFill()
-                            .frame(height: 110).frame(maxWidth: .infinity).clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    case .failure:
-                        imagePlaceholder(height: 110, failed: true)
-                    default:
-                        imagePlaceholder(height: 110)
+        return ZStack(alignment: .topTrailing) {
+            LazyVGrid(columns: cols, spacing: 6) {
+                ForEach(Array(urls.enumerated()), id: \.offset) { _, url in
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().scaledToFill()
+                                .frame(height: 120).frame(maxWidth: .infinity).clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        case .failure:
+                            imagePlaceholder(height: 120, failed: true)
+                        default:
+                            imagePlaceholder(height: 120)
+                        }
                     }
                 }
             }
+
+            // Image count badge
+            Text("\(urls.count)张")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.black.opacity(0.5), in: Capsule())
+                .padding(8)
         }
     }
 
@@ -546,7 +626,7 @@ struct PostCard: View {
     // MARK: - Reactions
 
     private var reactionRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             // Like button
             Button {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -562,55 +642,59 @@ struct PostCard: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: isLiked ? "heart.fill" : "heart")
-                        .foregroundStyle(isLiked ? Color.red : PawPalTheme.secondaryText)
-                        .scaleEffect(likeAnimating ? 1.35 : 1.0)
+                        .scaleEffect(likeAnimating ? 1.25 : 1.0)
                     if post.likeCount > 0 {
                         Text("\(post.likeCount)")
                             .contentTransition(.numericText())
                     }
                 }
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(isLiked ? Color.red : PawPalTheme.secondaryText)
-                .padding(.horizontal, 10)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(isLiked ? PawPalTheme.red : PawPalTheme.secondaryText)
+                .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
-                .background(
-                    isLiked
-                        ? LinearGradient(colors: [Color.red.opacity(0.15), Color.red.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                        : LinearGradient(colors: [PawPalTheme.background, PawPalTheme.background], startPoint: .topLeading, endPoint: .bottomTrailing),
-                    in: Capsule()
-                )
                 .animation(.easeInOut(duration: 0.15), value: isLiked)
             }
             .buttonStyle(.plain)
 
-            // Comment button — shows count when comments exist
+            // Comment button
             Button(action: onComment) {
-                reactionChip(icon: "message", label: commentCount > 0 ? "\(commentCount)" : "")
+                HStack(spacing: 5) {
+                    Image(systemName: "message")
+                    if commentCount > 0 { Text("\(commentCount)") }
+                }
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(PawPalTheme.secondaryText)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
             }
             .buttonStyle(.plain)
 
-            Spacer()
+            // Share button
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                // Share sheet would go here
+            } label: {
+                Image(systemName: "paperplane")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PawPalTheme.secondaryText)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
         }
+        .padding(.horizontal, 4)
+        .background(PawPalTheme.cardSoft.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     // MARK: - Comment Previews (Instagram / WeChat style)
 
     private var commentPreviewSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if commentCount > commentPreviews.count {
-                Button(action: onComment) {
-                    Text("查看全部 \(commentCount) 条评论")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(PawPalTheme.secondaryText)
-                }
-                .buttonStyle(.plain)
-            }
-
             ForEach(commentPreviews) { comment in
                 Button(action: onComment) {
                     (Text(comment.authorName)
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(PawPalTheme.primaryText)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.secondaryText)
                     + Text("  \(comment.content)")
                         .font(.system(size: 12))
                         .foregroundStyle(PawPalTheme.primaryText))
@@ -620,29 +704,19 @@ struct PostCard: View {
                 .buttonStyle(.plain)
             }
 
-            if commentCount == 0 {
+            if commentCount > commentPreviews.count {
                 Button(action: onComment) {
-                    Text("添加评论…")
-                        .font(.system(size: 12))
-                        .foregroundStyle(PawPalTheme.tertiaryText)
+                    Text("查看全部 \(commentCount) 条评论")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.orange)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.top, 2)
-        .padding(.horizontal, 2)
-    }
-
-    private func reactionChip(icon: String, label: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-            if !label.isEmpty { Text(label) }
-        }
-        .font(.system(size: 12, weight: .bold, design: .rounded))
-        .foregroundStyle(PawPalTheme.secondaryText)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(PawPalTheme.cardSoft, in: Capsule())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PawPalTheme.cardSoft.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     // MARK: - Helpers
@@ -672,7 +746,7 @@ struct PostCard: View {
     }
 
     private func relativeTime(from date: Date) -> String {
-        let s = Int(-date.timeIntervalSinceNow)
+        let s = max(0, Int(-date.timeIntervalSinceNow))
         if s < 60      { return "刚刚" }
         if s < 3600    { return "\(s / 60)分钟前" }
         if s < 86400   { return "\(s / 3600)小时前" }
