@@ -8,7 +8,6 @@ struct FeedView: View {
     var postPublishedID: UUID = UUID()
     @StateObject private var postsService  = PostsService()
     @StateObject private var followService = FollowService()
-    @State private var commentingPost: RemotePost?
     @State private var pendingDeletePost: RemotePost?
     @State private var toastMessage: String?
     /// Prevents redundant full reloads on every tab switch once feed is populated.
@@ -59,7 +58,7 @@ struct FeedView: View {
                                         await postsService.toggleLike(postID: post.id, userID: uid)
                                     }
                                 },
-                                onComment: { commentingPost = post },
+                                onComment: {},
                                 onFollow: { await followService.toggleFollow(targetID: post.owner_user_id) },
                                 onDelete: { pendingDeletePost = post }
                             )
@@ -184,17 +183,6 @@ struct FeedView: View {
             Button("取消", role: .cancel) { pendingDeletePost = nil }
         } message: { _ in
             Text("删除后将无法恢复。")
-        }
-        .sheet(item: $commentingPost) { post in
-            CommentsView(
-                postID: post.id,
-                currentUserID: myID,
-                currentUserDisplayName: authManager.currentProfile?.display_name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                    ? authManager.currentProfile!.display_name!
-                    : (authManager.currentUser?.displayName ?? authManager.currentUser?.email?.components(separatedBy: "@").first ?? "用户"),
-                currentUsername: authManager.currentProfile?.username,
-                postsService: postsService
-            )
         }
     }
 
@@ -634,8 +622,11 @@ struct PostCard: View {
                 .foregroundStyle(PawPalTheme.secondaryText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
-            }
             .buttonStyle(.plain)
+            // Comment button — navigates to PostDetailView
+            NavigationLink(value: post) {
+                reactionChip(icon: "message", label: commentCount > 0 ? "\(commentCount)" : "")
+            }
 
             // Share button
             Button {
@@ -658,8 +649,17 @@ struct PostCard: View {
 
     private var commentPreviewSection: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if commentCount > commentPreviews.count {
+                NavigationLink(value: post) {
+                    Text("查看全部 \(commentCount) 条评论")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(PawPalTheme.secondaryText)
+                }
+                .buttonStyle(.plain)
+            }
+
             ForEach(commentPreviews) { comment in
-                Button(action: onComment) {
+                NavigationLink(value: post) {
                     (Text(comment.authorName)
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(PawPalTheme.secondaryText)
@@ -672,11 +672,11 @@ struct PostCard: View {
                 .buttonStyle(.plain)
             }
 
-            if commentCount > commentPreviews.count {
-                Button(action: onComment) {
-                    Text("查看全部 \(commentCount) 条评论")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(PawPalTheme.orange)
+            if commentCount == 0 {
+                NavigationLink(value: post) {
+                    Text("添加评论…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(PawPalTheme.tertiaryText)
                 }
                 .buttonStyle(.plain)
             }

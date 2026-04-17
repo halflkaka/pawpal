@@ -6,6 +6,50 @@ Entries are in reverse chronological order.
 
 ---
 
+## 2026-04-14 — Pet avatar display in feed and pet profile, pet editor redesign ([#13](https://github.com/halflkaka/pawpal/pull/13))
+
+## Summary
+
+Renders pet avatar photos in Feed post cards and PetProfileView, redesigns the pet editor form with a custom unit picker and MapKit-powered city search, and removes the "贴贴" reaction button from PostCard.
+
+4 files changed, +244 / -48 lines.
+
+## Changes
+
+### UI
+- **Pet avatar in Feed** — `PostCard` loads `pet.avatar_url` via `AsyncImage`; falls back to species emoji on nil or load failure
+- **Pet avatar in PetProfileView** — extracted `petAvatar` computed property with the same `AsyncImage` / species emoji fallback; extracted from `petHeader` for clarity
+- **Reaction chip background** — changed from `PawPalTheme.background` to `PawPalTheme.cardSoft` for better contrast
+- **Removed "贴贴" reaction button** — reaction row in `PostCard` no longer includes the hug chip
+
+### Pet Editor Redesign
+- **Custom unit picker** — replaced `Picker(.menu)` for age/weight units with a `Menu`-based `unitMenu` view; shows a checkmark next to the selected option and an orange capsule label
+- **MapKit city search** — replaced free-text `homeCity` field with a `LocationPickerSheet` sheet backed by `MKLocalSearchCompleter`; shows real-time autocomplete results as the user types
+- **Sex selector fix** — removed "未设置" option; fixed layout with `fixedSize` and `Spacer(minLength: 8)`
+- **Field alignment** — `.multilineTextAlignment(.trailing)` now propagates into all `fieldRow` TextFields
+
+### Display Helpers (PetProfileView)
+- **`withUnit()`** — appends default unit (岁 / 公斤) to bare numeric values; values already containing CJK characters are returned unchanged
+- **`localizedSex()`** — translates "Male" / "Female" DB values to "公" / "母" in tag pills
+
+### Docs
+- **ROADMAP** — Phase 4 items updated with ✅ markers and implementation detail
+
+## Files Changed
+
+| Folder | Files |
+|---|---|
+| `PawPal/Views/` | `FeedView.swift`, `PetProfileView.swift`, `ProfileView.swift` |
+| `/` | `ROADMAP.md` |
+
+## Validations
+
+- ⚠️ **Build / tests** — results not available for retrospective PR
+
+Tested with: `xcodebuild test -project PawPal.xcodeproj -scheme PawPal -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
+
+---
+
 ## 2026-04-12 — Harden post image storage handling ([#10](https://github.com/halflkaka/pawpal/pull/10))
 
 ### Summary

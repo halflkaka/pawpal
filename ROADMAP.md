@@ -18,6 +18,7 @@ Phases 1 and 2 are complete. Phase 3 is partially done. Phases 4–6 are upcomin
 - Likes and comments on posts — real Supabase queries with optimistic updates
 - Follow / unfollow — `FollowService` with real follow/unfollow/toggle and follower counts
 - Feed filtered to followed users + self
+- ✅ Post detail view — `PostDetailView` with inline comments, optimistic like button, pet avatar link, and pinned input bar (PR #11)
 - ⚠️ Notification badges not yet implemented
 
 ## Phase 3 — Discovery ✅ Complete
@@ -34,8 +35,8 @@ Phases 1 and 2 are complete. Phase 3 is partially done. Phases 4–6 are upcomin
 - ✅ Pet avatar upload — `AvatarService` compresses and uploads to Supabase Storage; `PetsService.addPet` / `updatePet` accept `avatarData` and persist `avatar_url`
 - ✅ Avatar upload in editor — `ProfilePetEditorSheet` supports photo picker and passes `avatarData` through
 - ✅ Avatar photo display in `PetProfileView` — `AsyncImage` loads from `pet.avatar_url`; falls back to species emoji on nil or load failure
+- ✅ User avatar upload — `AvatarService.uploadUserAvatar`; displayed in `profileHeader` via `AsyncImage`; `PhotosPicker` in `ProfileAccountEditorSheet` (PR #12)
 - 🔲 Pet-specific follow (follow a pet, not just a user) — current follow graph is user-to-user only
-- 🔲 User avatar upload — no equivalent of `AvatarService` for owner profile photos
 
 ## Phase 5 — Messaging 🔲 Stub only
 
