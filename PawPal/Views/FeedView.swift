@@ -25,53 +25,57 @@ struct FeedView: View {
     private var isFiltered: Bool { !followService.followingIDs.isEmpty }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                header
+        VStack(spacing: 0) {
+            header
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
 
-                // Subtle nudge banner when user follows nobody yet.
-                // Guard with feedLoaded so it doesn't flash above the skeleton
-                // before loadFollowing has even started.
-                if feedLoaded && hasLoadedFollows && !isFiltered {
-                    followNudgeBanner
-                }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    // Subtle nudge banner when user follows nobody yet.
+                    // Guard with feedLoaded so it doesn't flash above the skeleton
+                    // before loadFollowing has even started.
+                    if feedLoaded && hasLoadedFollows && !isFiltered {
+                        followNudgeBanner
+                    }
 
-                if !feedLoaded || authManager.isRestoringSession || (postsService.isLoadingFeed && postsService.feedPosts.isEmpty) {
-                    // Show skeleton only for the first load, or when we truly
-                    // have no content yet. Once posts are on screen, keep them
-                    // visible during refresh so the scroll view height stays stable.
-                    feedSkeleton
-                } else if postsService.feedPosts.isEmpty {
-                    emptyFeed
-                } else {
-                    ForEach(postsService.feedPosts, id: \.id) { post in
-                        NavigationLink(value: post) {
-                            PostCard(
-                                post: post,
-                                currentUserID: myID,
-                                commentCount: postsService.commentCount(for: post.id),
-                                commentPreviews: postsService.commentPreviews[post.id] ?? [],
-                                isFollowingOwner: followService.isFollowing(post.owner_user_id),
-                                isOwnPost: post.owner_user_id == myID,
-                                onLike: {
-                                    if let uid = myID {
-                                        await postsService.toggleLike(postID: post.id, userID: uid)
-                                    }
-                                },
-                                onComment: {},
-                                onFollow: { await followService.toggleFollow(targetID: post.owner_user_id) },
-                                onDelete: { pendingDeletePost = post }
-                            )
+                    if !feedLoaded || authManager.isRestoringSession || (postsService.isLoadingFeed && postsService.feedPosts.isEmpty) {
+                        // Show skeleton only for the first load, or when we truly
+                        // have no content yet. Once posts are on screen, keep them
+                        // visible during refresh so the scroll view height stays stable.
+                        feedSkeleton
+                    } else if postsService.feedPosts.isEmpty {
+                        emptyFeed
+                    } else {
+                        ForEach(postsService.feedPosts, id: \.id) { post in
+                            NavigationLink(value: post) {
+                                PostCard(
+                                    post: post,
+                                    currentUserID: myID,
+                                    commentCount: postsService.commentCount(for: post.id),
+                                    commentPreviews: postsService.commentPreviews[post.id] ?? [],
+                                    isFollowingOwner: followService.isFollowing(post.owner_user_id),
+                                    isOwnPost: post.owner_user_id == myID,
+                                    onLike: {
+                                        if let uid = myID {
+                                            await postsService.toggleLike(postID: post.id, userID: uid)
+                                        }
+                                    },
+                                    onComment: {},
+                                    onFollow: { await followService.toggleFollow(targetID: post.owner_user_id) },
+                                    onDelete: { pendingDeletePost = post }
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 24)
+            .scrollIndicators(.hidden)
         }
-        .scrollIndicators(.hidden)
         .background(PawPalBackground())
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -582,8 +586,7 @@ struct PostCard: View {
     // MARK: - Reactions
 
     private var reactionRow: some View {
-        HStack(spacing: 0) {
-            // Like button
+        HStack(spacing: 14) {
             Button {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 Task {
@@ -596,53 +599,64 @@ struct PostCard: View {
                     }
                 }
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: isLiked ? "heart.fill" : "heart")
-                        .scaleEffect(likeAnimating ? 1.25 : 1.0)
-                    if post.likeCount > 0 {
-                        Text("\(post.likeCount)")
-                            .contentTransition(.numericText())
-                    }
-                }
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(isLiked ? PawPalTheme.red : PawPalTheme.secondaryText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .animation(.easeInOut(duration: 0.15), value: isLiked)
+                reactionInlineLabel(
+                    icon: isLiked ? "heart.fill" : "heart",
+                    text: post.likeCount > 0 ? "\(post.likeCount)" : nil,
+                    foreground: isLiked ? PawPalTheme.red : PawPalTheme.secondaryText,
+                    scaleIcon: likeAnimating
+                )
+                .contentTransition(.numericText())
             }
             .buttonStyle(.plain)
 
-            // Comment button
-            Button(action: onComment) {
-                HStack(spacing: 5) {
-                    Image(systemName: "message")
-                    if commentCount > 0 { Text("\(commentCount)") }
-                }
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(PawPalTheme.secondaryText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-            .buttonStyle(.plain)
-            // Comment button — navigates to PostDetailView
             NavigationLink(value: post) {
-                reactionChip(icon: "message", label: commentCount > 0 ? "\(commentCount)" : "")
+                reactionInlineLabel(
+                    icon: "message",
+                    text: commentCount > 0 ? "\(commentCount)" : nil,
+                    foreground: PawPalTheme.secondaryText,
+                    scaleIcon: false
+                )
             }
+            .buttonStyle(.plain)
 
-            // Share button
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 // Share sheet would go here
             } label: {
-                Image(systemName: "paperplane")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(PawPalTheme.secondaryText)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+                reactionInlineLabel(
+                    icon: "paperplane",
+                    text: nil,
+                    foreground: PawPalTheme.secondaryText,
+                    scaleIcon: false
+                )
             }
             .buttonStyle(.plain)
+
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 4)
-        .background(PawPalTheme.cardSoft.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 2)
+        .padding(.top, 2)
+    }
+
+    private func reactionInlineLabel(
+        icon: String,
+        text: String?,
+        foreground: Color,
+        scaleIcon: Bool
+    ) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .scaleEffect(scaleIcon ? 1.14 : 1.0)
+
+            if let text, !text.isEmpty {
+                Text(text)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+            }
+        }
+        .foregroundStyle(foreground)
+        .frame(minHeight: 22)
     }
 
     // MARK: - Comment Previews (Instagram / WeChat style)
