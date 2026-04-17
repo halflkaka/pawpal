@@ -16,6 +16,7 @@ struct FeedView: View {
     /// Guards the onChange handler — suppresses the spurious refresh triggered
     /// by the very first loadFollowing call during initial task setup.
     @State private var initialLoadDone = false
+    @State private var isRefreshingFeed = false
 
     private var myID: UUID? { authManager.currentUser?.id }
 
@@ -77,24 +78,7 @@ struct FeedView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .refreshable {
-            // Timeout guard: if the network hangs, the spinner still
-            // dismisses after 8s instead of spinning forever.
-            let service = postsService
-            let uid = myID
-            var filterIDs: [UUID]? = nil
-            if let uid, isFiltered {
-                filterIDs = followService.feedFilter(includingSelf: uid)
-            }
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    await service.loadFeed(followingIDs: filterIDs, currentUserID: uid)
-                }
-                group.addTask {
-                    try? await Task.sleep(nanoseconds: 8_000_000_000)
-                }
-                _ = await group.next()
-                group.cancelAll()
-            }
+            await refreshFeed()
         }
         .task {
             // Don't attempt any network calls while the Supabase session is still
@@ -234,6 +218,10 @@ struct FeedView: View {
     }
 
     private func refreshFeed() async {
+        guard !isRefreshingFeed else { return }
+        isRefreshingFeed = true
+        defer { isRefreshingFeed = false }
+
         if let uid = myID, isFiltered {
             await postsService.loadFeed(followingIDs: followService.feedFilter(includingSelf: uid), currentUserID: uid)
         } else {

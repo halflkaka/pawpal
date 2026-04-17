@@ -47,7 +47,12 @@ final class PostsService: ObservableObject {
 
         // Prefer the caller-provided ID so we never block on auth.session
         // (which can hang if a token refresh is in flight).
-        let currentUserID = currentUserID ?? (try? await client.auth.session.user.id)
+        let resolvedCurrentUserID: UUID?
+        if let currentUserID {
+            resolvedCurrentUserID = currentUserID
+        } else {
+            resolvedCurrentUserID = try? await client.auth.session.user.id
+        }
 
         // Snapshot current in-memory likes so we can restore optimistic state
         // for posts where the server returns an empty likes array (e.g. when
@@ -76,10 +81,10 @@ final class PostsService: ObservableObject {
                 // protecting against partial join results.
                 for i in posts.indices {
                     if posts[i].likes.isEmpty,
-                       let currentUserID,
+                       let resolvedCurrentUserID,
                        let prev = previousLikes[posts[i].id],
-                       prev.contains(where: { $0.user_id == currentUserID }) {
-                        posts[i].likes = [RemoteLike(user_id: currentUserID)]
+                       prev.contains(where: { $0.user_id == resolvedCurrentUserID }) {
+                        posts[i].likes = [RemoteLike(user_id: resolvedCurrentUserID)]
                     }
                 }
 
@@ -87,9 +92,9 @@ final class PostsService: ObservableObject {
                     var merged = post
                     if let previous = feedPosts.first(where: { $0.id == post.id }) {
                         if merged.likes.isEmpty,
-                           let currentUserID,
-                           previous.likes.contains(where: { $0.user_id == currentUserID }) {
-                            merged.likes = [RemoteLike(user_id: currentUserID)]
+                           let resolvedCurrentUserID,
+                           previous.likes.contains(where: { $0.user_id == resolvedCurrentUserID }) {
+                            merged.likes = [RemoteLike(user_id: resolvedCurrentUserID)]
                         }
                         if merged.comments.isEmpty, let knownCount = commentCounts[post.id], knownCount > 0 {
                             merged.comments = Array(repeating: RemoteCommentStub(id: UUID()), count: knownCount)
