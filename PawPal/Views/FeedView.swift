@@ -38,9 +38,9 @@ struct FeedView: View {
                 }
 
                 if !feedLoaded || authManager.isRestoringSession || (postsService.isLoadingFeed && postsService.feedPosts.isEmpty) {
-                    // Show skeleton until the very first load completes — prevents
-                    // any flash of the empty-state during session restore or between
-                    // the restore finishing and isLoadingFeed becoming true.
+                    // Show skeleton only for the first load, or when we truly
+                    // have no content yet. Once posts are on screen, keep them
+                    // visible during refresh so the scroll view height stays stable.
                     feedSkeleton
                 } else if postsService.feedPosts.isEmpty {
                     emptyFeed
@@ -117,7 +117,6 @@ struct FeedView: View {
         // When a new post is published from CreatePostView, reset and reload so
         // the author's own new post appears without a manual pull-to-refresh.
         .onChange(of: postPublishedID) { _, _ in
-            feedLoaded = false
             initialLoadDone = false
             Task {
                 if let uid = myID {
@@ -316,41 +315,22 @@ struct FeedView: View {
 // MARK: - Shimmer Skeleton
 
 private struct SkeletonCard: View {
-    @State private var shimmerOffset: CGFloat = -1.0
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                Circle().fill(shimmerGradient).frame(width: 44, height: 44)
+                Circle().fill(PawPalTheme.cardSoft).frame(width: 44, height: 44)
                 VStack(alignment: .leading, spacing: 6) {
-                    RoundedRectangle(cornerRadius: 4).fill(shimmerGradient).frame(width: 120, height: 14)
-                    RoundedRectangle(cornerRadius: 4).fill(shimmerGradient).frame(width: 80, height: 11)
+                    RoundedRectangle(cornerRadius: 4).fill(PawPalTheme.cardSoft).frame(width: 120, height: 14)
+                    RoundedRectangle(cornerRadius: 4).fill(PawPalTheme.cardSoft).frame(width: 80, height: 11)
                 }
             }
-            RoundedRectangle(cornerRadius: 4).fill(shimmerGradient).frame(maxWidth: .infinity).frame(height: 14)
-            RoundedRectangle(cornerRadius: 4).fill(shimmerGradient).frame(width: 200, height: 14)
-            RoundedRectangle(cornerRadius: 20).fill(shimmerGradient).frame(maxWidth: .infinity).frame(height: 200)
+            RoundedRectangle(cornerRadius: 4).fill(PawPalTheme.cardSoft).frame(maxWidth: .infinity).frame(height: 14)
+            RoundedRectangle(cornerRadius: 4).fill(PawPalTheme.cardSoft).frame(width: 200, height: 14)
+            RoundedRectangle(cornerRadius: 20).fill(PawPalTheme.cardSoft).frame(maxWidth: .infinity).frame(height: 200)
         }
         .padding(16)
         .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shadow(color: PawPalTheme.softShadow, radius: 8, y: 3)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: false)) {
-                shimmerOffset = 1.0
-            }
-        }
-    }
-
-    private var shimmerGradient: LinearGradient {
-        LinearGradient(
-            stops: [
-                .init(color: PawPalTheme.cardSoft, location: max(0, shimmerOffset - 0.3)),
-                .init(color: PawPalTheme.cardSoft.opacity(0.4), location: shimmerOffset),
-                .init(color: PawPalTheme.cardSoft, location: min(1, shimmerOffset + 0.3))
-            ],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
     }
 }
 
