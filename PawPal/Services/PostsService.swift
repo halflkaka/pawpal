@@ -40,12 +40,19 @@ final class PostsService: ObservableObject {
 
     // MARK: - Load Feed
 
-    func loadFeed(followingIDs: [UUID]? = nil) async {
+    func loadFeed(followingIDs: [UUID]? = nil, currentUserID: UUID? = nil) async {
         isLoadingFeed = true
         errorMessage = nil
         defer { isLoadingFeed = false }
 
-        let currentUserID = try? await client.auth.session.user.id
+        // Prefer the caller-provided ID so we never block on auth.session
+        // (which can hang if a token refresh is in flight).
+        let resolvedCurrentUserID: UUID?
+        if let currentUserID {
+            resolvedCurrentUserID = currentUserID
+        } else {
+            resolvedCurrentUserID = try? await client.auth.session.user.id
+        }
 
         // Snapshot current in-memory likes so we can restore optimistic state
         // for posts where the server returns an empty likes array (e.g. when
@@ -74,10 +81,10 @@ final class PostsService: ObservableObject {
                 // protecting against partial join results.
                 for i in posts.indices {
                     if posts[i].likes.isEmpty,
-                       let currentUserID,
+                       let resolvedCurrentUserID,
                        let prev = previousLikes[posts[i].id],
-                       prev.contains(where: { $0.user_id == currentUserID }) {
-                        posts[i].likes = [RemoteLike(user_id: currentUserID)]
+                       prev.contains(where: { $0.user_id == resolvedCurrentUserID }) {
+                        posts[i].likes = [RemoteLike(user_id: resolvedCurrentUserID)]
                     }
                 }
 
@@ -85,9 +92,9 @@ final class PostsService: ObservableObject {
                     var merged = post
                     if let previous = feedPosts.first(where: { $0.id == post.id }) {
                         if merged.likes.isEmpty,
-                           let currentUserID,
-                           previous.likes.contains(where: { $0.user_id == currentUserID }) {
-                            merged.likes = [RemoteLike(user_id: currentUserID)]
+                           let resolvedCurrentUserID,
+                           previous.likes.contains(where: { $0.user_id == resolvedCurrentUserID }) {
+                            merged.likes = [RemoteLike(user_id: resolvedCurrentUserID)]
                         }
                         if merged.comments.isEmpty, let knownCount = commentCounts[post.id], knownCount > 0 {
                             merged.comments = Array(repeating: RemoteCommentStub(id: UUID()), count: knownCount)
@@ -97,12 +104,19 @@ final class PostsService: ObservableObject {
                 }
 
                 feedPosts = mergedPosts
-                await refreshLikes(for: mergedPosts.map(\.id))
                 commentCounts = Dictionary(uniqueKeysWithValues: mergedPosts.map { post in
                     (post.id, max(post.commentCount, commentCounts[post.id] ?? 0))
                 })
-                await refreshCommentCounts(for: mergedPosts.map(\.id))
-                await loadCommentPreviews(for: mergedPosts.map(\.id))
+
+                // Secondary engagement data loads in the background so
+                // .refreshable can dismiss immediately after posts arrive.
+                let postIDs = mergedPosts.map(\.id)
+                Task { [weak self] in
+                    guard let self else { return }
+                    await self.refreshLikes(for: postIDs)
+                    await self.refreshCommentCounts(for: postIDs)
+                    await self.loadCommentPreviews(for: postIDs)
+                }
                 return
             } catch {
                 print("[PostsService] loadFeed select='\(select)' 失败: \(error)")
@@ -142,11 +156,15 @@ final class PostsService: ObservableObject {
                 }
 
                 userPosts = mergedPosts
-                await refreshLikes(for: mergedPosts.map(\.id))
                 for post in mergedPosts {
                     commentCounts[post.id] = max(post.commentCount, commentCounts[post.id] ?? 0)
                 }
-                await refreshCommentCounts(for: mergedPosts.map(\.id))
+                let postIDs = mergedPosts.map(\.id)
+                Task { [weak self] in
+                    guard let self else { return }
+                    await self.refreshLikes(for: postIDs)
+                    await self.refreshCommentCounts(for: postIDs)
+                }
                 return
             } catch {
                 print("[PostsService] loadUserPosts select='\(select)' 失败: \(error)")
@@ -185,11 +203,15 @@ final class PostsService: ObservableObject {
                 }
 
                 petPosts = posts
-                await refreshLikes(for: posts.map(\.id))
                 for post in posts {
                     commentCounts[post.id] = max(post.commentCount, commentCounts[post.id] ?? 0)
                 }
-                await refreshCommentCounts(for: posts.map(\.id))
+                let postIDs = posts.map(\.id)
+                Task { [weak self] in
+                    guard let self else { return }
+                    await self.refreshLikes(for: postIDs)
+                    await self.refreshCommentCounts(for: postIDs)
+                }
                 return
             } catch {
                 print("[PostsService] loadPetPosts select='\(select)' 失败: \(error)")
@@ -278,7 +300,7 @@ final class PostsService: ObservableObject {
                 }
             }
 
-            await loadFeed(followingIDs: followingIDs)
+            await loadFeed(followingIDs: followingIDs, currentUserID: userID)
             errorMessage = nil
             return true
         } catch {
