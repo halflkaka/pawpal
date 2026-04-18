@@ -86,4 +86,20 @@ Each entry: what was decided, why, and what it means going forward.
 
 ---
 
+## 2026 "warm serif + polaroid" visual refresh
+
+**Decision:** The app's visual language was refactored against a new design prototype (`_standalone_.html` / `design_extract/`). The refactor touches every primary screen — Feed, Profile, Virtual Pet, Tab bar, Chat — plus the shared `PawPalDesignSystem.swift` palette. Chat was pulled forward from Phase 5 at the user's explicit request even though `docs/scope.md` had deferred it.
+
+**Why:** The previous palette was a bright, saturated orange on pure white that read as generic; the new direction is a warm cream (`#FAF6F0`) background, a single warm-orange accent (`#FF7A52`), serif ("Fraunces" → `.serif` fallback) for wordmarks and pet names, and polaroid-style post cards with alternating tilt. The result is more magazine/journal than social-network. Pet-first identity is reinforced with vector `DogAvatar` fallbacks for every breed, and a playful `VirtualPetView` stage on dog profiles.
+
+**Implications:**
+- `PawPalDesignSystem.swift` is the authoritative palette. New screens must use its tokens (`PawPalTheme.accent`, `PawPalTheme.cardSoft`, `PawPalTheme.hairline`, `PawPalTheme.online`, etc.) rather than hardcoding colours.
+- Old token names (`PawPalTheme.orange`, `.orangeSoft`, `.orangeGlow`) are kept as backward-compat aliases so ancillary files keep compiling. Do not resurrect these names in new code — prefer `accent` / `accentSoft` / `accentGlow`.
+- `DogAvatar` is the breed-aware vector fallback used everywhere a pet photo might be missing. The chain is: real photo → `DogAvatar` (for dogs) → species SF Symbol → emoji. `PetCharacterView` is still rendered for non-dog species so we don't regress cats/rabbits/birds.
+- `VirtualPetView` replaces `PetCharacterView` for dogs on the profile. It's decorative only — hunger/energy are derived from `PetStats` heuristically (no backend persistence).
+- `ChatListView` + new `ChatDetailView` are local-only (no backend). Do not treat the sample data as production-ready; real chat requires a Supabase messaging table + realtime subscription, which is still in Phase 5.
+- The Chinese-first UI rule is unchanged — all strings introduced by the refactor are in Simplified Chinese.
+
+---
+
 _Add new entries here when significant architectural, product, or design decisions are made. Changelog captures what changed; this captures why._

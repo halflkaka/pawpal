@@ -2,7 +2,9 @@
 
 ## Current State
 
-Phases 1 and 2 are complete. Phase 3 is partially done. Phases 4–6 are upcoming.
+Phases 1, 2, and 3 are complete. Phase 4 is partial (pet-specific follow remains). Phase 5 is now visually complete (UI shipped in the 2026 refresh) but still needs a backend. Phase 6 is upcoming.
+
+The 2026 visual refresh (April 2026) refactored every primary screen — Feed, Profile, Virtual Pet, Tab bar, Chat — against a new prototype. See `docs/decisions.md` for rationale.
 
 ---
 
@@ -38,10 +40,12 @@ Phases 1 and 2 are complete. Phase 3 is partially done. Phases 4–6 are upcomin
 - ✅ User avatar upload — `AvatarService.uploadUserAvatar`; displayed in `profileHeader` via `AsyncImage`; `PhotosPicker` in `ProfileAccountEditorSheet` (PR #12)
 - 🔲 Pet-specific follow (follow a pet, not just a user) — current follow graph is user-to-user only
 
-## Phase 5 — Messaging 🔲 Stub only
+## Phase 5 — Messaging ⚠️ UI only
 
-- `ChatListView` exists with hardcoded placeholder chat previews
-- No backend, no service, no real data
+- ✅ `ChatListView` redesigned — serif wordmark, cream search, online rail with DogAvatar bubbles, threaded rows with unread badges (April 2026 refresh)
+- ✅ `ChatDetailView` new — sticky header, bubble groups with reaction overlay, "typing…" indicator, sticker tray, composer with accent send button
+- 🔲 Real backend — still no messages table, no realtime subscription. Sample data is local-only and resets on relaunch
+- 🔲 Read receipts / unread tracking against real data
 - Requires Supabase Realtime or a messages table
 
 ## Phase 6 — Polish & Growth 🔲 Not started

@@ -12,6 +12,16 @@ struct RemotePet: Identifiable, Codable, Equatable, Hashable {
     var home_city: String?
     var bio: String?
     var avatar_url: String?
+    /// Cumulative boop count incremented by the virtual pet's tap-to-boop
+    /// (CHANGELOG #38). Optional because older rows — and select statements
+    /// that predate migration 013 — won't include the column. UI code
+    /// should read via `pet.boop_count ?? 0`.
+    var boop_count: Int?
+    /// Persisted virtual-pet accessory ('none' / 'bow' / 'hat' /
+    /// 'glasses'). Added in migration 014 so the dress-up state survives
+    /// between sessions. Nil is treated as 'none' — if the column is
+    /// missing (pre-migration clients) the renderer falls back cleanly.
+    var accessory: String?
 
     var hometown: String? {
         get { home_city }

@@ -12,17 +12,19 @@ Based on ROADMAP.md phases 1–3, which are the active focus:
 - Follow/unfollow and social graph
 - Discovery / explore screen
 - Profile and pet management
+- **1:1 chat (text MVP)** — promoted out of deferred in #45. Migration 016 backs `conversations` + `messages`; `ChatService` owns inbox/thread loads + optimistic send. Scope limited to text-only DMs between two users; the UI entry point for starting a new thread is still TBD (see known-issues.md).
 - Performance and polish on the above
 
 ---
 
 ## Deferred — Do Not Invest Here Yet
 
-- **Chat / messaging** — `ChatListView` exists as a shell only; wiring it to Supabase Realtime is Phase 5. Do not add logic or UI to this screen beyond the stub.
+- **Chat realtime, stickers, reactions, unread, presence** — #45 shipped the text-DM MVP, but typing indicators, online dots, sticker tray, per-message reactions, and unread badges are intentionally out of scope. The `messages` schema doesn't carry `last_read_at` / `read_by` yet; grow the schema before adding UI.
 - **Push notifications** — Phase 6. No infrastructure exists for this yet.
 - **Pet-specific follow** — Phase 4. Current follow graph is user-to-user only.
 - **App Store / TestFlight prep** — Phase 6. Not a current concern.
 - **Feed algorithm** — Phase 6. Feed is chronological for now; do not add ranking logic.
+- **Passive virtual-pet decay** — #45 persisted the game loop, but there's no scheduled decay yet. Stats only change when the owner taps 喂食 / 玩耍 / 摸摸. A periodic RPC to nudge `pet_state` toward the time-derived baseline is an intentional follow-up.
 
 ---
 

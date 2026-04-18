@@ -6,7 +6,15 @@ struct ProfileView: View {
     let user: AppUser
     @Bindable var authManager: AuthManager
     @AppStorage("activePetID") private var activePetID = ""
-    @StateObject private var petsService = PetsService()
+    // Shared with `PetProfileView` so that optimistic local updates on one
+    // screen (e.g. tapping the 🎩 chip here) are immediately visible to
+    // the other without a Supabase round-trip. See `PetsService.shared`
+    // docstring for why we moved off of per-view `@StateObject` instances.
+    @ObservedObject private var petsService = PetsService.shared
+    /// Shared with `PetProfileView` for tap-count sync and persisted
+    /// feed/pet/play stat bumps (migration 015). See
+    /// `VirtualPetStateStore` for the full rationale.
+    @ObservedObject private var petStateStore = VirtualPetStateStore.shared
     @State private var showingAddPet = false
     @State private var editingPet: RemotePet?
     @State private var showingEditAccount = false
@@ -20,10 +28,26 @@ struct ProfileView: View {
     @State private var followerCount = 0
     @State private var isLoadingAll = false
     @State private var petToView: RemotePet?
+    /// Posts / Tagged tab strip selection (Tagged is a placeholder for now —
+    /// no `taggedPosts` backend exists yet; switching tabs shows an empty
+    /// state so the affordance is discoverable without faking data).
+    @State private var selectedGridTab: GridTab = .posts
     /// Called when the user taps "创建首条帖子" — switches to the Create tab.
     var onCreatePost: (() -> Void)? = nil
     @StateObject private var followService = FollowService()
     @StateObject private var postsService = PostsService()
+
+    enum GridTab: Hashable {
+        case posts
+        case tagged
+    }
+
+    /// Navigation payload for the 关注 / 粉丝 stat cells. Hashable so it
+    /// can flow through `.navigationDestination(for:)` on the parent
+    /// NavigationStack without needing a separate `@State` toggle.
+    struct FollowListDestination: Hashable {
+        let mode: FollowListView.Mode
+    }
 
     private let profileService = ProfileService()
 
@@ -38,24 +62,36 @@ struct ProfileView: View {
         ScrollView {
             VStack(spacing: 0) {
                 profileHeader
-                Divider()
+                softDivider
                 petsBand
-                Divider()
+                highlightsStrip
+                if activePet != nil {
+                    softDivider
+                    featuredPetSection
+                }
+                softDivider
                 postsGrid
             }
         }
         .scrollIndicators(.hidden)
-        .background(PawPalBackground())
+        // HTML ProfileScreen uses `background: '#fff'` (pure white) — distinct
+        // from Feed's warm cream. Keeps the profile reading as a clean gallery.
+        .background(Color.white)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top) { topBar }
+        .task(id: activePetID) {
+            // Reload pet-filtered posts whenever the user picks a different pet.
+            if let id = activePet?.id { await postsService.loadPetPosts(for: id) }
+        }
         .navigationDestination(for: RemotePet.self) { pet in
             PetProfileView(
                 pet: pet,
                 currentUserID: user.id,
                 currentUserDisplayName: accountDisplayName,
-                currentUsername: profile?.username
+                currentUsername: profile?.username,
+                authManager: authManager
             )
         }
         .navigationDestination(isPresented: Binding(
@@ -67,7 +103,8 @@ struct ProfileView: View {
                     pet: pet,
                     currentUserID: user.id,
                     currentUserDisplayName: accountDisplayName,
-                    currentUsername: profile?.username
+                    currentUsername: profile?.username,
+                    authManager: authManager
                 )
             }
         }
@@ -78,7 +115,19 @@ struct ProfileView: View {
                 isOwnPost: post.owner_user_id == user.id,
                 currentUserDisplayName: accountDisplayName,
                 currentUsername: profile?.username,
-                postsService: postsService
+                postsService: postsService,
+                authManager: authManager
+            )
+        }
+        // Follow-list push. Routed through a dedicated value so the
+        // stat-cell `NavigationLink` (below) can be a plain tap target
+        // without exposing internal construction of `FollowListView`.
+        .navigationDestination(for: FollowListDestination.self) { dest in
+            FollowListView(
+                targetUserID: user.id,
+                viewerUserID: user.id,
+                authManager: authManager,
+                initialMode: dest.mode
             )
         }
         .task { await loadAll() }
@@ -208,88 +257,229 @@ struct ProfileView: View {
     // MARK: - Profile header
 
     private var profileHeader: some View {
-        VStack(spacing: 18) {
-            // Avatar
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [PawPalTheme.orange, PawPalTheme.orangeSoft],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 88, height: 88)
-                    .shadow(color: PawPalTheme.orange.opacity(0.32), radius: 18, y: 8)
-                if let urlStr = profile?.avatar_url, let url = URL(string: urlStr) {
-                    AsyncImage(url: url) { phase in
-                        if case .success(let img) = phase {
-                            img.resizable().scaledToFill()
-                                .frame(width: 88, height: 88)
-                                .clipShape(Circle())
-                        } else {
-                            Image(systemName: "person.fill")
-                                .font(.system(size: 38, weight: .medium))
-                                .foregroundStyle(.white)
-                        }
+        VStack(spacing: 14) {
+            // Compact user row — pet-first design means the human account
+            // takes a single horizontal slot instead of the full-width hero.
+            HStack(spacing: 14) {
+                userAvatar(size: 56)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(accountDisplayName)
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                        .lineLimit(1)
+
+                    HStack(spacing: 6) {
+                        Text(profileHandle.isEmpty ? (user.email ?? "") : profileHandle)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Text("·")
+                            .foregroundStyle(.secondary)
+                        Text("宠物家长")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(PawPalTheme.secondaryText)
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(PawPalTheme.red.opacity(0.8))
                     }
-                } else {
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 38, weight: .medium))
-                        .foregroundStyle(.white)
                 }
+
+                Spacer()
             }
 
-            // Name + handle + bio
-            VStack(spacing: 6) {
-                Text(accountDisplayName)
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundStyle(PawPalTheme.primaryText)
+            // Bio / "about me" line. Surfaces the user's bio if set; otherwise
+            // shows a gentle nudge to add one. Tapping either state opens the
+            // account editor sheet. Prevents the header from feeling naked
+            // when the bio field is empty.
+            bioLine
 
-                Text(profileHandle.isEmpty ? (user.email ?? "") : profileHandle)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                if let bio = trimmed(profile?.bio) {
-                    Text(bio)
-                        .font(.system(size: 14))
-                        .foregroundStyle(PawPalTheme.secondaryText)
-                        .multilineTextAlignment(.center)
-                        .lineSpacing(2)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 2)
-                }
-            }
-
-            // Edit Profile button
-            Button { showingEditAccount = true } label: {
-                Text("编辑资料")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(PawPalTheme.primaryText)
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 10)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .shadow(color: PawPalTheme.shadow, radius: 8, y: 4)
-            }
-            .buttonStyle(.plain)
-
-            // Stats row — redacted while the first loadAll() is in flight
+            // Stats row — redacted while the first loadAll() is in flight.
+            // Kept in the pet-first layout so social proof stays visible.
+            //
+            // 粉丝 / 关注 cells are wrapped in a `NavigationLink` so tapping
+            // them opens the follow-list view (new in #46). 帖子 / 宠物
+            // stay plain because there's no dedicated list screen for
+            // those (the posts grid and pets rail are already on this
+            // screen). `.buttonStyle(.plain)` keeps the typography flat
+            // so the row doesn't suddenly look like two pills + two
+            // labels.
             HStack(spacing: 0) {
                 statCell(value: "\(postsService.userPosts.count)", label: "帖子")
                 statDivider()
                 statCell(value: "\(petsService.pets.count)", label: "宠物")
                 statDivider()
-                statCell(value: "\(followerCount)", label: "粉丝")
+                NavigationLink(value: FollowListDestination(mode: .followers)) {
+                    statCell(value: "\(followerCount)", label: "粉丝")
+                }
+                .buttonStyle(.plain)
                 statDivider()
-                statCell(value: "\(followService.followingIDs.count)", label: "关注")
+                NavigationLink(value: FollowListDestination(mode: .following)) {
+                    statCell(value: "\(followService.followingIDs.count)", label: "关注")
+                }
+                .buttonStyle(.plain)
             }
             .padding(.vertical, 12)
             .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .redacted(reason: isLoadingAll ? .placeholder : [])
+
+            // Action row. Primary call-to-action is "编辑资料"; secondary chips
+            // surface common profile actions. Gives the header something
+            // touchable below the stats so it doesn't abruptly terminate.
+            headerActionRow
         }
         .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 28)
+        .padding(.top, 16)
+        .padding(.bottom, 18)
+    }
+
+    /// Bio line — either displays the user's bio (wrapped to 2 lines) with an
+    /// inline "编辑" affordance, or prompts the user to add one. Prompt state
+    /// uses accent tint + sparkles to read as an opportunity, not an error.
+    private var bioLine: some View {
+        let bio = (profile?.bio ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return Button {
+            showingEditAccount = true
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                if bio.isEmpty {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.accent)
+                        .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("给主页加一段介绍吧")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(PawPalTheme.primaryText)
+                        Text("一句话告诉大家你和你的毛孩子")
+                            .font(.system(size: 11))
+                            .foregroundStyle(PawPalTheme.secondaryText)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.tertiaryText)
+                } else {
+                    Image(systemName: "quote.opening")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(PawPalTheme.accent.opacity(0.55))
+                        .padding(.top, 4)
+                    Text(bio)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                        .lineSpacing(3)
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "pencil")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.tertiaryText)
+                        .padding(.top, 3)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(bio.isEmpty ? PawPalTheme.accentTint : PawPalTheme.subtleSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(bio.isEmpty ? PawPalTheme.accent.opacity(0.25) : PawPalTheme.hairline, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("profile-bio-row")
+    }
+
+    /// Primary "编辑资料" pill plus two secondary chips. Uses the share sheet
+    /// for "分享主页" (shares a pawpal:// link with the user's handle — harmless
+    /// placeholder URL that survives until we stand up real deep-linking).
+    private var headerActionRow: some View {
+        HStack(spacing: 10) {
+            Button { showingEditAccount = true } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("编辑资料")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    LinearGradient(
+                        colors: [PawPalTheme.accent, PawPalTheme.accentSoft],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    in: Capsule()
+                )
+                .shadow(color: PawPalTheme.accent.opacity(0.28), radius: 10, y: 4)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("edit-profile-button")
+
+            ShareLink(item: shareURLForSelf, message: Text(shareMessage)) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(PawPalTheme.primaryText)
+                    .frame(width: 40, height: 40)
+                    .background(Color.white.opacity(0.9), in: Circle())
+                    .overlay(Circle().stroke(PawPalTheme.hairline, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// Placeholder deep link for the share sheet — `pawpal://u/<handle>` uses
+    /// the user's handle if set, else the uuid. Works even without real
+    /// deep-link handling: iOS will pass it through as a text URL in Messages
+    /// / Mail / etc. When we wire up universal links this call-site doesn't
+    /// need to change.
+    private var shareURLForSelf: URL {
+        let handle = profile?.username?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let slug = (handle?.isEmpty == false ? handle! : user.id.uuidString)
+        return URL(string: "pawpal://u/\(slug)") ?? URL(string: "https://pawpal.app")!
+    }
+
+    private var shareMessage: String {
+        "来 PawPal 看看 \(accountDisplayName) 的毛孩子吧 🐾"
+    }
+
+    /// Reusable user-avatar bubble — used in the compact header.
+    /// Falls back to a person glyph when there is no avatar URL or the
+    /// image fails to load.
+    private func userAvatar(size: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [PawPalTheme.orange, PawPalTheme.orangeSoft],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: size, height: size)
+                .shadow(color: PawPalTheme.orange.opacity(0.28), radius: 10, y: 4)
+            if let urlStr = profile?.avatar_url, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let img) = phase {
+                        img.resizable().scaledToFill()
+                            .frame(width: size, height: size)
+                            .clipShape(Circle())
+                    } else {
+                        Image(systemName: "person.fill")
+                            .font(.system(size: size * 0.42, weight: .medium))
+                            .foregroundStyle(.white)
+                    }
+                }
+            } else {
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.42, weight: .medium))
+                    .foregroundStyle(.white)
+            }
+        }
     }
 
     private func statCell(value: String, label: String) -> some View {
@@ -351,6 +541,11 @@ struct ProfileView: View {
                         ForEach(petsService.pets) { pet in
                             petBubble(pet)
                         }
+                        // Ghost "+" bubble sits as a peer at the end of the
+                        // row so the band never feels half-filled when the
+                        // user has only one or two pets. Tapping it opens
+                        // the same editor as the "添加" button in the header.
+                        addPetGhostBubble
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 6)
@@ -370,45 +565,57 @@ struct ProfileView: View {
 
     private func petBubble(_ pet: RemotePet) -> some View {
         let isActive = pet.id.uuidString == activePetID
+        let isDog = (pet.species ?? "").lowercased() == "dog"
         return VStack(spacing: 8) {
             ZStack {
-                // Background ring
-                Circle()
-                    .fill(isActive
-                          ? AnyShapeStyle(LinearGradient(
-                                colors: [PawPalTheme.orange, PawPalTheme.orangeSoft],
-                                startPoint: .topLeading, endPoint: .bottomTrailing))
-                          : AnyShapeStyle(PawPalTheme.cardSoft))
-                    .frame(width: 68, height: 68)
-                    .overlay(!isActive ? Circle().stroke(PawPalTheme.orangeGlow, lineWidth: 1.5) : nil)
+                // Active accent ring + cream gap (matches the design's
+                // selected-pet treatment in the profile picker).
+                if isActive {
+                    Circle()
+                        .stroke(PawPalTheme.accent, lineWidth: 2)
+                        .frame(width: 72, height: 72)
+                }
 
                 if let urlStr = pet.avatar_url, let url = URL(string: urlStr) {
                     AsyncImage(url: url) { phase in
                         if case .success(let img) = phase {
                             img.resizable().scaledToFill()
-                                .frame(width: 68, height: 68)
+                                .frame(width: 64, height: 64)
                                 .clipShape(Circle())
+                        } else if isDog {
+                            DogAvatar(
+                                variant: DogAvatar.Variant.from(breed: pet.breed),
+                                size: 64,
+                                background: Color(red: 1.00, green: 0.953, blue: 0.902)
+                            )
                         } else {
                             Image(systemName: iconName(for: pet.species ?? ""))
                                 .font(.system(size: 28, weight: .medium))
-                                .foregroundStyle(isActive ? .white : PawPalTheme.orange)
+                                .foregroundStyle(PawPalTheme.accent)
+                                .frame(width: 64, height: 64)
+                                .background(PawPalTheme.cardSoft, in: Circle())
                         }
                     }
+                } else if isDog {
+                    DogAvatar(
+                        variant: DogAvatar.Variant.from(breed: pet.breed),
+                        size: 64,
+                        background: Color(red: 1.00, green: 0.953, blue: 0.902)
+                    )
                 } else {
                     Image(systemName: iconName(for: pet.species ?? ""))
                         .font(.system(size: 28, weight: .medium))
-                        .foregroundStyle(isActive ? .white : PawPalTheme.orange)
+                        .foregroundStyle(PawPalTheme.accent)
+                        .frame(width: 64, height: 64)
+                        .background(PawPalTheme.cardSoft, in: Circle())
                 }
             }
-            .shadow(
-                color: isActive ? PawPalTheme.orange.opacity(0.35) : PawPalTheme.softShadow,
-                radius: 10, y: 4
-            )
+            .frame(width: 72, height: 72)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isActive)
 
             Text(pet.name)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(PawPalTheme.primaryText)
+                .font(.system(size: 12, weight: isActive ? .bold : .medium, design: .default))
+                .foregroundStyle(isActive ? PawPalTheme.primaryText : PawPalTheme.tertiaryText)
                 .lineLimit(1)
         }
         .frame(width: 72)
@@ -444,61 +651,484 @@ struct ProfileView: View {
         }
     }
 
+    /// Dashed-ring ghost bubble rendered at the end of the pets scroll row.
+    /// Peer-sized to the real pet bubbles (72pt outer) so single-pet users
+    /// see a balanced row rather than a lonely avatar with empty trailing
+    /// space. Tapping opens the same add-pet sheet as the header "+ 添加".
+    private var addPetGhostBubble: some View {
+        Button { showingAddPet = true } label: {
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .strokeBorder(
+                            PawPalTheme.accent.opacity(0.55),
+                            style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])
+                        )
+                        .frame(width: 72, height: 72)
+                    Image(systemName: "plus")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(PawPalTheme.accent)
+                }
+                Text("添加宠物")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(PawPalTheme.secondaryText)
+                    .lineLimit(1)
+            }
+            .frame(width: 72)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("add-pet-ghost-bubble")
+    }
+
+    // MARK: - Highlights strip
+
+    /// Three compact cards that give the top of the profile some visual
+    /// density without introducing a new backend. Everything here is derived
+    /// from data we already load.
+    ///
+    /// 1. 累计点赞 — sum of `likeCount` across the user's posts.
+    /// 2. 最新动态 — relative time of the most recent post ("2小时前" /
+    ///    "昨天" / "3天前"); falls back to "尚未发布" when the user has
+    ///    no posts yet.
+    /// 3. 陪伴天数 — days since the earliest pet's `created_at`. Gives a
+    ///    sense of how long the account has been "chronicling" pets.
+    private var highlightsStrip: some View {
+        HStack(spacing: 10) {
+            highlightCard(
+                emoji: "💛",
+                value: "\(totalLikesAcrossPosts)",
+                label: "累计点赞",
+                tint: PawPalTheme.red.opacity(0.12)
+            )
+            highlightCard(
+                emoji: "📝",
+                value: latestPostRelative,
+                label: "最新动态",
+                tint: PawPalTheme.accentTint
+            )
+            highlightCard(
+                emoji: "🐾",
+                value: companionshipDurationText,
+                label: "陪伴天数",
+                tint: PawPalTheme.subtleSurface
+            )
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
+        .padding(.bottom, 18)
+        .redacted(reason: isLoadingAll ? .placeholder : [])
+    }
+
+    private func highlightCard(emoji: String, value: String, label: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(emoji)
+                .font(.system(size: 18))
+            Text(value)
+                .font(.system(size: 17, weight: .heavy, design: .rounded))
+                .foregroundStyle(PawPalTheme.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(PawPalTheme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(tint)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(PawPalTheme.hairline, lineWidth: 1)
+        )
+    }
+
+    private var totalLikesAcrossPosts: Int {
+        postsService.userPosts.reduce(0) { $0 + $1.likeCount }
+    }
+
+    private var latestPostRelative: String {
+        guard let latest = postsService.userPosts
+            .max(by: { $0.created_at < $1.created_at })?.created_at else {
+            return "尚未发布"
+        }
+        let interval = Date().timeIntervalSince(latest)
+        let minutes = Int(interval / 60)
+        let hours   = Int(interval / 3600)
+        let days    = Int(interval / 86400)
+        if minutes < 1    { return "刚刚" }
+        if minutes < 60   { return "\(minutes)分钟前" }
+        if hours   < 24   { return "\(hours)小时前" }
+        if days    < 2    { return "昨天" }
+        if days    < 30   { return "\(days)天前" }
+        let months = days / 30
+        if months < 12    { return "\(months)个月前" }
+        return "\(months / 12)年前"
+    }
+
+    /// Days since the earliest pet was created. 0–1 day reads as "今天";
+    /// single digits read as "N天"; larger values render as "N天" up to a
+    /// year, then fall back to "一年以上".
+    private var companionshipDurationText: String {
+        guard let earliest = petsService.pets
+            .min(by: { $0.created_at < $1.created_at })?.created_at else {
+            return "—"
+        }
+        let days = max(0, Int(Date().timeIntervalSince(earliest) / 86400))
+        if days < 1        { return "今天" }
+        if days < 365      { return "\(days)天" }
+        return "一年以上"
+    }
+
+    /// Softer section separator — the default `Divider()` reads harsh against
+    /// the warm PawPal background. Uses the hairline token and a hair of
+    /// vertical padding so sections breathe.
+    private var softDivider: some View {
+        Rectangle()
+            .fill(PawPalTheme.hairline)
+            .frame(height: 0.5)
+            .padding(.horizontal, 20)
+    }
+
+    // MARK: - Featured pet section
+
+    /// Derived stats for the currently-selected pet. Recomputed whenever
+    /// `postsService.petPosts` changes because `PetStats.make` is cheap.
+    private var activePetStats: PetStats {
+        PetStats.make(from: postsService.petPosts)
+    }
+
+    /// The centerpiece of the redesigned profile. For dogs we show the new
+    /// `VirtualPetView` stage with mood/hunger/energy bars. The stage is
+    /// species-agnostic: dogs render through the `LargeDog` canvas (with
+    /// accessory chips), other species route the same interactive chrome
+    /// (feed/pet/play, stats, thought bubble, tap-to-boop) around a
+    /// `PetCharacterView` illustration. This means a newly-created cat
+    /// gets the same playable experience as a dog — just with a cat
+    /// visual and cat-flavoured thought copy.
+    @ViewBuilder
+    private var featuredPetSection: some View {
+        if let pet = activePet {
+            // Seed values derived from the real PetStats so a newly-
+            // created pet still reads plausibly, and a pet with many
+            // posts lands near the design's reference numbers. The
+            // full seeding logic lives on `RemotePet` (see
+            // `RemotePet+VirtualPet.swift`) and is shared with
+            // `PetProfileView` so both screens stay in lock-step.
+            // Owner-only call site: persist the dress-up choice back to
+            // `pets.accessory` (migration 014) so the bow / hat / glasses
+            // is still there on relaunch. No `onBoop` — booping your own
+            // pet shouldn't inflate the public boop counter.
+            //
+            // Compute the seed state once and reuse it for both the
+            // `state:` init param AND the external stat bindings so
+            // the two are guaranteed to agree on the same snapshot of
+            // (posts + time).
+            let vpState = pet.virtualPetState(
+                stats: activePetStats,
+                posts: postsService.petPosts
+            )
+            // Prefer the persisted `pet_state` snapshot over the time-
+            // derived baseline so the owner's feed / pet / play taps
+            // actually move the bars AND stay moved across restart. When
+            // no row exists yet (new pet, pre-migration) the snapshot is
+            // nil and we fall back to the baseline values computed above.
+            let persisted = petStateStore.state(for: pet.id)
+            let displayMood   = persisted?.mood   ?? vpState.mood
+            let displayHunger = persisted?.hunger ?? vpState.hunger
+            let displayEnergy = persisted?.energy ?? vpState.energy
+            VirtualPetView(
+                state: vpState,
+                // Keying the shared store on the pet id lets both views
+                // display the same tap counter and stat bars. See
+                // `VirtualPetStateStore` for the full rationale.
+                petID: pet.id,
+                // Parent-owned accessory so a change in `PetProfileView`
+                // (which shares `PetsService.shared`) flows back here
+                // automatically via the bound `pet.accessory`. Without
+                // this, `VirtualPetView`'s `@State` would latch the
+                // accessory at first appear and the two screens would
+                // drift apart.
+                externalAccessory: DogAvatar.Accessory(rawValue: pet.accessory ?? "none") ?? DogAvatar.Accessory.none,
+                // Stat bars: feed these from the persisted snapshot when
+                // we have one, otherwise from the time-derived baseline.
+                // `VirtualPetStateStore` updates `petStates` optimistically
+                // on feed/pet/play so the bar animates on the same tick
+                // the owner taps the button.
+                externalMood: displayMood,
+                externalHunger: displayHunger,
+                externalEnergy: displayEnergy,
+                onAccessoryChanged: { accessory in
+                    Task {
+                        await petsService.updatePetAccessory(
+                            petID: pet.id,
+                            ownerID: user.id,
+                            accessory: accessory.rawValue
+                        )
+                    }
+                },
+                onAction: { action in
+                    Task {
+                        await petStateStore.applyAction(
+                            action,
+                            petID: pet.id,
+                            baseline: (vpState.mood, vpState.hunger, vpState.energy)
+                        )
+                    }
+                }
+            )
+                .id(pet.id)  // reset state only when user switches pets
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
+                .task(id: pet.id) {
+                    // Lazy-load the persisted snapshot the first time we
+                    // render this pet. Keyed on pet.id so switching the
+                    // active pet refetches instead of showing stale data.
+                    await petStateStore.loadIfNeeded(petID: pet.id)
+                }
+        }
+    }
+
+    /// Mood chip shown above the character. Uses the mood's own tint so
+    /// "energetic" reads yellow, "sleeping" reads muted, etc.
+    private func moodChip(for mood: PetCharacterMood) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: mood.systemImage)
+                .font(.system(size: 11, weight: .bold))
+            Text(mood.chineseLabel)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+        }
+        .foregroundStyle(PawPalTheme.primaryText)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(mood.tint.opacity(0.35), in: Capsule())
+        .overlay(Capsule().stroke(mood.tint.opacity(0.5), lineWidth: 1))
+        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: mood)
+    }
+
+    /// Stat pill with a leading SF Symbol. Used for happiness (heart) and
+    /// personality (bolt/leaf/etc).
+    private func statPillSymbol(symbol: String, label: String, symbolTint: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(symbolTint)
+            Text(label)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.primaryText)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.white.opacity(0.92), in: Capsule())
+        .overlay(Capsule().stroke(PawPalTheme.shadow, lineWidth: 1))
+        .shadow(color: PawPalTheme.softShadow, radius: 4, y: 2)
+    }
+
+    /// Stat pill with a leading emoji. The mockup uses a bone emoji for the
+    /// Level pill, which SF Symbols cannot match cleanly.
+    private func statPillEmoji(emoji: String, label: String) -> some View {
+        HStack(spacing: 5) {
+            Text(emoji)
+                .font(.system(size: 12))
+            Text(label)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.primaryText)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.white.opacity(0.92), in: Capsule())
+        .overlay(Capsule().stroke(PawPalTheme.shadow, lineWidth: 1))
+        .shadow(color: PawPalTheme.softShadow, radius: 4, y: 2)
+    }
+
     // MARK: - Posts grid
 
     private var postsGrid: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "square.grid.3x3.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(PawPalTheme.orange)
-                Text("帖子")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(PawPalTheme.primaryText)
-                Spacer()
+            // Thin section band that separates the pet stage from the grid.
+            // Mirrors the prototype's `#FAF7F4` hairline divider strip.
+            Rectangle()
+                .fill(PawPalTheme.subtleSurface)
+                .frame(height: 8)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(PawPalTheme.hairline).frame(height: 0.5)
+                }
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(PawPalTheme.hairline).frame(height: 0.5)
+                }
+
+            // Posts / Tagged tab strip. The active tab has an accent
+            // underline; inactive tab is muted.
+            HStack(spacing: 0) {
+                gridTab(
+                    title: "Posts",
+                    icon: "square.grid.3x3",
+                    tab: .posts
+                )
+                gridTab(
+                    title: "Tagged",
+                    icon: "tag",
+                    tab: .tagged
+                )
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(PawPalTheme.hairline).frame(height: 0.5)
+            }
 
-            Divider()
+            // Caption row: "Showing N posts of {petName}". Only surfaced
+            // for the Posts tab — Tagged has its own empty state.
+            if selectedGridTab == .posts, let pet = activePet {
+                HStack(spacing: 4) {
+                    Text("共 ")
+                        .foregroundStyle(PawPalTheme.secondaryText)
+                    Text("\(postsService.petPosts.count)")
+                        .fontWeight(.bold)
+                        .foregroundStyle(PawPalTheme.primaryText)
+                    Text(" 条 ")
+                        .foregroundStyle(PawPalTheme.secondaryText)
+                    Text(pet.name)
+                        .fontWeight(.bold)
+                        .foregroundStyle(PawPalTheme.primaryText)
+                    Text(" 的帖子")
+                        .foregroundStyle(PawPalTheme.secondaryText)
+                    Spacer()
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+            }
 
-            if isLoadingAll && postsService.userPosts.isEmpty {
-                postsLoadingSkeleton
-            } else if postsService.userPosts.isEmpty {
-                emptyPostsState
-            } else {
-                realPostsGrid
+            // Content for the active tab.
+            Group {
+                switch selectedGridTab {
+                case .posts:
+                    postsTabContent
+                case .tagged:
+                    taggedTabContent
+                }
             }
         }
     }
 
+    /// A single tab pill in the Posts/Tagged strip. Selected state has an
+    /// accent underline and primary-ink text; inactive state is muted.
+    private func gridTab(title: String, icon: String, tab: GridTab) -> some View {
+        let selected = selectedGridTab == tab
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) { selectedGridTab = tab }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        } label: {
+            VStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: selected ? .semibold : .regular))
+                    Text(title)
+                        .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                }
+                .foregroundStyle(selected ? PawPalTheme.primaryText : PawPalTheme.secondaryText)
+
+                Rectangle()
+                    .fill(selected ? PawPalTheme.accent : Color.clear)
+                    .frame(height: 2)
+            }
+            .padding(.top, 12)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Real Posts tab content — delegates to the existing
+    /// loading / empty / grid branches.
+    @ViewBuilder
+    private var postsTabContent: some View {
+        let activePetPosts = postsService.petPosts
+        let isLoadingPetPosts = postsService.isLoadingPetPosts
+
+        if activePet == nil {
+            noPetSelectedState
+        } else if isLoadingPetPosts && activePetPosts.isEmpty {
+            postsLoadingSkeleton
+        } else if activePetPosts.isEmpty {
+            emptyPostsState
+        } else {
+            realPostsGrid
+        }
+    }
+
+    /// Tagged tab content — placeholder while we wait for a tagged-posts
+    /// backend. Matches the design's "No posts of X yet" empty state.
+    private var taggedTabContent: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "tag")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(PawPalTheme.tertiaryText)
+            Text("还没有被标记的帖子")
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(PawPalTheme.primaryText)
+            Text("当朋友在帖子中 @ 你的宠物时，会出现在这里")
+                .font(.system(size: 12))
+                .foregroundStyle(PawPalTheme.secondaryText)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
+        .padding(.horizontal, 32)
+    }
+
+    /// Shown when the user has no pets yet — nudges them toward adding one.
+    private var noPetSelectedState: some View {
+        VStack(spacing: 10) {
+            Text("还没有选中的宠物")
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.primaryText)
+            Text("添加一只宠物，开启 TA 的主页")
+                .font(.system(size: 13))
+                .foregroundStyle(PawPalTheme.secondaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 36)
+    }
+
     // MARK: - Posts loading skeleton
 
+    /// Instagram-style 3-column skeleton. Square tiles with a hair gap to
+    /// match the design's `gap: 3` grid.
     private var postsLoadingSkeleton: some View {
-        LazyVGrid(
-            columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
-            spacing: 10
-        ) {
-            ForEach(0..<4, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+        LazyVGrid(columns: gridColumns, spacing: 3) {
+            ForEach(0..<9, id: \.self) { _ in
+                Rectangle()
                     .fill(PawPalTheme.cardSoft)
-                    .frame(height: 200)
+                    .aspectRatio(1, contentMode: .fill)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 0)
+        .padding(.vertical, 8)
         .redacted(reason: .placeholder)
+    }
+
+    /// Shared columns for the 3-column tile grid.
+    private var gridColumns: [GridItem] {
+        [
+            GridItem(.flexible(), spacing: 3),
+            GridItem(.flexible(), spacing: 3),
+            GridItem(.flexible(), spacing: 3)
+        ]
     }
 
     // MARK: - Empty posts state
 
     private var emptyPostsState: some View {
-        VStack(spacing: 16) {
-            Text("暂无帖子")
+        let petName = activePet?.name ?? "宠物"
+        return VStack(spacing: 16) {
+            Text("\(petName) 还没有帖子")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(PawPalTheme.primaryText)
                 .padding(.top, 24)
-            Text("分享你的宠物日常，开启社交新世界")
+            Text("分享 TA 的日常，留下一段美好回忆吧")
                 .font(.system(size: 14))
                 .foregroundStyle(PawPalTheme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -508,8 +1138,8 @@ struct ProfileView: View {
                 } label: {
                     actionCard(
                         icon: "square.and.pencil",
-                        title: "创建首条帖子",
-                        subtitle: "去发布页分享宠物的精彩时刻",
+                        title: "为 \(petName) 发第一条",
+                        subtitle: "去发布页分享 TA 的精彩时刻",
                         color: PawPalTheme.orange
                     )
                 }
@@ -545,65 +1175,147 @@ struct ProfileView: View {
         .shadow(color: PawPalTheme.shadow, radius: 8, y: 4)
     }
 
+    /// Instagram-style 3-up grid of square tiles. No card chrome — the
+    /// photo is the tile, with a like badge in the bottom-left corner.
     private var realPostsGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-            ForEach(postsService.userPosts) { post in
+        LazyVGrid(columns: gridColumns, spacing: 3) {
+            ForEach(postsService.petPosts) { post in
                 NavigationLink(value: post) {
-                    profilePostCard(post)
+                    profilePostTile(post)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 0)
+        .padding(.top, 4)
+        .padding(.bottom, 16)
     }
 
-    private func profilePostCard(_ post: RemotePost) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let imageURL = post.imageURLs.first {
-                AsyncImage(url: imageURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .frame(height: 150)
-                            .frame(maxWidth: .infinity)
-                            .clipped()
-                    case .failure:
-                        profilePostPlaceholder(height: 150, icon: "photo")
-                    default:
-                        profilePostPlaceholder(height: 150, icon: nil)
+    /// Square tile for the 3-column profile grid. Shows the first photo
+    /// (or a placeholder) with a like-count overlay.
+    private func profilePostTile(_ post: RemotePost) -> some View {
+        let hasImage = post.imageURLs.first != nil
+        // Use the `Color.clear.aspectRatio(..., .fit).overlay { … }` idiom
+        // to guarantee the tile is exactly 1:1 and never proposes a larger
+        // size to its content. The previous `.aspectRatio(1, contentMode:
+        // .fill)` on the outer ZStack let the photo render taller/wider
+        // than the cell (you could see pink flowers leaking into the
+        // adjacent "Image test" tile). Overlay + .clipped here prevents
+        // that.
+        //
+        // Two separate overlays (content, then badge) instead of a ZStack
+        // inside a single overlay. The ZStack approach relied on
+        // `.bottomLeading` alignment to pin the badge, but `scaledToFill`
+        // on the image could grow the ZStack's effective bounds past the
+        // tile frame, which pushed the badge into negative x on photo
+        // tiles and left only the right edge visible (exactly the "`2`
+        // with missing heart + pill" artefact reported in #45 follow-up).
+        // Anchoring the badge to the outer `Color.clear` via
+        // `.overlay(alignment: .bottomLeading)` binds it to the tile's
+        // frame, not the content layer's.
+        return Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                Group {
+                    if let imageURL = post.imageURLs.first {
+                        AsyncImage(url: imageURL) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                            case .failure:
+                                profileTilePlaceholder(icon: "photo")
+                            default:
+                                profileTilePlaceholder(icon: nil)
+                            }
+                        }
+                    } else {
+                        // Text-only tile: no placeholder icon (previously a
+                        // big `text.alignleft` glyph sat behind the caption
+                        // and read as broken/loading UI). Clean cardSoft
+                        // fill with a small accent quote glyph + the caption
+                        // itself, clipped to the square so long captions
+                        // truncate gracefully.
+                        textOnlyProfileTile(caption: post.caption)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            } else {
-                profilePostPlaceholder(height: 150, icon: "text.alignleft")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
             }
-
-            Text(post.caption)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(PawPalTheme.primaryText)
-                .lineLimit(2)
-
-            HStack(spacing: 10) {
-                Label("\(post.likeCount)", systemImage: "heart")
-                Label("\(postsService.commentCount(for: post.id))", systemImage: "message")
+            .overlay(alignment: .bottomLeading) {
+                // Like-count badge — translucent dark pill so it stays
+                // legible over both photo tiles (previously white-on-
+                // photo) and the new text-only tiles (previously
+                // invisible white-on-cream).
+                //
+                // Only rendered when the post has at least one like: a
+                // zero-state "♥ 0" overlay was both visually noisy and
+                // drew the eye to the absence of engagement.
+                if post.likeCount > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(formatCount(post.likeCount))
+                            .font(.system(size: 10, weight: .bold))
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.black.opacity(hasImage ? 0.5 : 0.55))
+                    )
+                    .padding(.leading, 6)
+                    .padding(.bottom, 6)
+                }
             }
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(PawPalTheme.secondaryText)
-        }
-        .padding(10)
-        .background(Color.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: PawPalTheme.shadow, radius: 8, y: 4)
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipped()
+            .contentShape(Rectangle())
     }
 
-    private func profilePostPlaceholder(height: CGFloat, icon: String?) -> some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
+    /// Text-only post tile body — soft gradient fill with a tinted quote
+    /// glyph and the caption rendered as the hero of the tile. Caption is
+    /// clipped to 5 lines and horizontally constrained so the last line
+    /// never runs under the like-count badge.
+    private func textOnlyProfileTile(caption: String) -> some View {
+        // Solid `cardSoft` fill. Previously used a LinearGradient that
+        // faded to `cardSoft.opacity(0.7)` at the bottom-right for depth,
+        // but the translucency revealed whatever was behind the grid and
+        // made tiles read as slightly dirty. A flat fill is cleaner on
+        // any parent background.
+        Rectangle()
             .fill(PawPalTheme.cardSoft)
-            .frame(maxWidth: .infinity)
-            .frame(height: height)
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Image(systemName: "quote.opening")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.accent)
+                    // 11.5pt is a hair smaller than 12 — on the square
+                    // tile this fits ~9 CJK glyphs per line instead of 8,
+                    // so captions like "如果我发一条纯文字，特别长的动态怎么办呢"
+                    // wrap in 3 lines instead of 4. 6-line clamp gives a
+                    // little more breathing room before truncation.
+                    Text(caption)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(6)
+                        .truncationMode(.tail)
+                        // Reserve space on the bottom so the badge never
+                        // sits under the caption's last line.
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 11)
+                .padding(.top, 11)
+                .padding(.bottom, 28)
+            }
+    }
+
+    private func profileTilePlaceholder(icon: String?) -> some View {
+        Rectangle()
+            .fill(PawPalTheme.cardSoft)
             .overlay {
                 if let icon {
                     Image(systemName: icon)
@@ -613,6 +1325,15 @@ struct ProfileView: View {
                     ProgressView()
                 }
             }
+    }
+
+    /// Compact like-count formatter for tile badges (e.g. 1240 → "1.2k").
+    private func formatCount(_ value: Int) -> String {
+        if value >= 1000 {
+            let k = Double(value) / 1000.0
+            return String(format: "%.1fk", k)
+        }
+        return "\(value)"
     }
 
     // MARK: - Helpers
@@ -629,6 +1350,13 @@ struct ProfileView: View {
         followerCount = loadedFollowerCount
         if activePetID.isEmpty, let first = petsService.pets.first {
             activePetID = first.id.uuidString
+        }
+        // Load per-pet posts for the resolved active pet. This ensures the
+        // grid populates on first mount even when `activePetID` was already
+        // persisted in AppStorage (in which case the `.task(id:)` observer
+        // would not refire on launch since the id didn't change).
+        if let id = activePet?.id {
+            await postsService.loadPetPosts(for: id)
         }
     }
 
@@ -721,9 +1449,17 @@ private struct ProfilePetEditorSheet: View {
 
     private let ageUnits    = ["岁", "个月"]
     private let weightUnits = ["公斤", "斤"]
+    // Only Dog and Cat are offered when creating or editing a pet. The
+    // virtual-pet stage has dedicated illustrations + interactions for
+    // both species (`LargeDog` + `PetCharacterView.Cat`), whereas
+    // rabbit/bird/hamster/other were previously selectable but had no
+    // matching interactive experience. Narrowing the picker matches what
+    // the app actually supports end-to-end. Legacy pets with other
+    // species strings still render correctly via the defensive
+    // fallbacks in FeedView / PetCharacterView / PostDetailView — we
+    // just don't offer those choices at creation time anymore.
     private let speciesOptions: [(emoji: String, label: String)] = [
-        ("🐶", "Dog"), ("🐱", "Cat"), ("🐰", "Rabbit"),
-        ("🦜", "Bird"), ("🐹", "Hamster"), ("🐾", "Other")
+        ("🐶", "Dog"), ("🐱", "Cat")
     ]
 
     let title: String

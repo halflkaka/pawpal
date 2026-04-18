@@ -112,4 +112,65 @@ final class FollowService: ObservableObject {
     func feedFilter(includingSelf selfID: UUID) -> [UUID] {
         Array(followingIDs) + [selfID]
     }
+
+    // MARK: - Follow-list profiles
+    //
+    // The list views in #46 (关注 / 粉丝 pages) need the full profile
+    // rows, not just ids. We run this as a two-step query rather than a
+    // join because the `follows` → `profiles` relationship isn't declared
+    // as a foreign-key hint in PostgREST, so nested selects return
+    // ambiguous-relationship errors. Two queries (ids, then a single
+    // `in (…)` filter on profiles) is 2 round-trips but readable and
+    // reliable.
+
+    /// Users that `userID` follows. Returns the `RemoteProfile` rows so
+    /// the list view can render avatar + handle + display name without a
+    /// per-row fetch.
+    func loadFollowingProfiles(for userID: UUID) async -> [RemoteProfile] {
+        struct FollowRow: Codable { let followed_user_id: UUID }
+        do {
+            let follows: [FollowRow] = try await client
+                .from("follows")
+                .select("followed_user_id")
+                .eq("follower_user_id", value: userID.uuidString)
+                .execute()
+                .value
+            return try await fetchProfiles(ids: follows.map(\.followed_user_id))
+        } catch {
+            print("[FollowService] loadFollowingProfiles 失败: \(error)")
+            return []
+        }
+    }
+
+    /// Users that follow `userID`. Symmetric to `loadFollowingProfiles`
+    /// — same two-step strategy, flipped filter.
+    func loadFollowerProfiles(for userID: UUID) async -> [RemoteProfile] {
+        struct FollowRow: Codable { let follower_user_id: UUID }
+        do {
+            let follows: [FollowRow] = try await client
+                .from("follows")
+                .select("follower_user_id")
+                .eq("followed_user_id", value: userID.uuidString)
+                .execute()
+                .value
+            return try await fetchProfiles(ids: follows.map(\.follower_user_id))
+        } catch {
+            print("[FollowService] loadFollowerProfiles 失败: \(error)")
+            return []
+        }
+    }
+
+    /// Batch profile fetch. Used by both list loaders above. Returns an
+    /// empty array for empty input so callers can chain without a guard.
+    private func fetchProfiles(ids: [UUID]) async throws -> [RemoteProfile] {
+        guard !ids.isEmpty else { return [] }
+        let list = ids.map { $0.uuidString }.joined(separator: ",")
+        let rows: [RemoteProfile] = try await client
+            .from("profiles")
+            .select()
+            .filter("id", operator: "in", value: "(\(list))")
+            .execute()
+            .value
+        return rows
+    }
 }

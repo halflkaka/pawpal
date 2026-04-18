@@ -230,10 +230,6 @@ struct ContactsView: View {
             return normalizedSpecies(post.pet?.species) == "dog"
         case .cats:
             return normalizedSpecies(post.pet?.species) == "cat"
-        case .rabbits:
-            return ["rabbit", "bunny"].contains(normalizedSpecies(post.pet?.species))
-        case .birds:
-            return normalizedSpecies(post.pet?.species) == "bird"
         }
     }
 
@@ -274,20 +270,20 @@ struct ContactsView: View {
     }
 }
 
+// Species filter tabs mirror the species picker in the pet editor —
+// only Dog and Cat are offered since those are the only species the
+// pet editor now creates. Legacy records with other species (from
+// before #36) simply won't match any filter except 全部.
 private enum DiscoverFilter: CaseIterable {
     case all
     case dogs
     case cats
-    case rabbits
-    case birds
 
     var title: String {
         switch self {
         case .all: return "全部"
         case .dogs: return "狗狗"
         case .cats: return "猫咪"
-        case .rabbits: return "兔兔"
-        case .birds: return "鸟类"
         }
     }
 }

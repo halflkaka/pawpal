@@ -7,6 +7,11 @@ struct PostDetailView: View {
     let currentUserDisplayName: String
     let currentUsername: String?
     @ObservedObject var postsService: PostsService
+    /// Forwarded to `PetProfileView` so the "给主人发消息" affordance is
+    /// reachable when a visitor reaches the owner's pet page via a
+    /// post-detail → pet link. Optional for backward compatibility —
+    /// call sites that don't have an auth manager yet can omit it.
+    var authManager: AuthManager?
 
     @State private var isLiked: Bool
     @State private var likeCount: Int
@@ -27,7 +32,8 @@ struct PostDetailView: View {
         isOwnPost: Bool,
         currentUserDisplayName: String = "用户",
         currentUsername: String? = nil,
-        postsService: PostsService
+        postsService: PostsService,
+        authManager: AuthManager? = nil
     ) {
         self.post = post
         self.currentUserID = currentUserID
@@ -35,6 +41,7 @@ struct PostDetailView: View {
         self.currentUserDisplayName = currentUserDisplayName
         self.currentUsername = currentUsername
         self.postsService = postsService
+        self.authManager = authManager
         _isLiked = State(initialValue: currentUserID.map { post.isLiked(by: $0) } ?? false)
         _likeCount = State(initialValue: post.likeCount)
     }
@@ -61,7 +68,8 @@ struct PostDetailView: View {
                 pet: pet,
                 currentUserID: currentUserID,
                 currentUserDisplayName: currentUserDisplayName,
-                currentUsername: currentUsername
+                currentUsername: currentUsername,
+                authManager: authManager
             )
         }
         .alert("删除评论？", isPresented: deleteCommentAlertBinding, presenting: pendingDeleteComment) { comment in
