@@ -286,9 +286,9 @@ final class PostsService: ObservableObject {
                     }
                 } catch {
                     if !uploadedPaths.isEmpty {
-                        try? await client.storage.from(storageBucket).remove(paths: uploadedPaths)
+                        _ = try? await client.storage.from(storageBucket).remove(paths: uploadedPaths)
                     }
-                    try? await client
+                    _ = try? await client
                         .from("posts")
                         .delete()
                         .eq("id", value: postID.uuidString)
@@ -318,7 +318,7 @@ final class PostsService: ObservableObject {
         do {
             let storagePaths = storagePathsForPost(postID, userID: userID)
             if !storagePaths.isEmpty {
-                try? await client.storage.from(storageBucket).remove(paths: storagePaths)
+                _ = try? await client.storage.from(storageBucket).remove(paths: storagePaths)
             }
 
             try await client

@@ -123,6 +123,67 @@ create table follows (
 
 ---
 
+### pet_visits
+Social proof for `PetProfileView`. Records one row per unique (pet, viewer, calendar day). See migration `013_pet_visits_and_boops.sql` and CHANGELOG #38.
+
+```sql
+create table pet_visits (
+  pet_id uuid not null references pets(id) on delete cascade,
+  viewer_user_id uuid not null references auth.users(id) on delete cascade,
+  visited_on date not null default (now() at time zone 'utc')::date,
+  first_visited_at timestamptz not null default now(),
+  primary key (pet_id, viewer_user_id, visited_on)
+);
+```
+
+- The primary key is the dedupe key — `INSERT ... ON CONFLICT DO NOTHING` on the client means same-day refreshes don't double-count, but returning on a new calendar day adds a new row.
+- **Owner self-visits are filtered client-side** (the app skips `recordVisit` when `viewer_user_id == pet.owner_user_id`). This is deliberate — keeping the exclusion in app code rather than the RLS policy lets an admin backfill or correct the table without fighting policies.
+- Displayed on `PetProfileView` stats card as "访客" with the count being `COUNT(*)` for the pet.
+
+---
+
+### pets.boop_count (column)
+Cumulative tap-to-boop counter on the virtual pet. Added in migration 013.
+
+```sql
+alter table pets
+  add column boop_count integer not null default 0;
+```
+
+Updated only via the `increment_pet_boop_count` RPC, never via direct `UPDATE` from the client (to avoid having to loosen the `pets` RLS update policy for non-owners). The RPC is `security definer` and `grant execute ... to authenticated` — any signed-in user can boop any pet.
+
+```sql
+create function increment_pet_boop_count(
+  pet_id uuid,
+  by_count integer default 1
+) returns integer
+  language plpgsql
+  security definer
+  set search_path = public;
+```
+
+Displayed on `PetProfileView` stats card as "摸摸". The client debounces taps over ~1.8s and flushes an aggregate delta, so a burst of 10 taps becomes one RPC call with `by_count = 10`.
+
+---
+
+### pets.accessory (column)
+Persisted virtual-pet dress-up state. Added in migration 014 / CHANGELOG #39.
+
+```sql
+alter table pets
+  add column accessory text;
+
+alter table pets
+  add constraint pets_accessory_check
+  check (accessory is null or accessory in ('none', 'bow', 'hat', 'glasses'));
+```
+
+Written by owners only (the existing `pets` UPDATE RLS policy restricts UPDATEs to `owner_user_id = auth.uid()`). The CHECK constraint rejects unknown values so a bad client build can't leave us with arbitrary strings the renderer can't map to `DogAvatar.Accessory`. Nil / missing is treated as `'none'` by the client for rows written before the migration landed.
+
+Read inside `RemotePet.virtualPetState(stats:posts:now:)` — when the virtual pet stage mounts, the saved accessory is rendered immediately instead of resetting to bare-headed.
+
+---
+
 ## Indexes
 
 ```sql
@@ -133,6 +194,9 @@ create index idx_posts_created_at on posts(created_at desc);
 create index idx_post_images_post_id on post_images(post_id);
 create index idx_follows_follower_user_id on follows(follower_user_id);
 create index idx_follows_followed_user_id on follows(followed_user_id);
+create index idx_pet_visits_pet_id on pet_visits(pet_id);
+create index idx_pet_visits_viewer_user_id on pet_visits(viewer_user_id);
+create index idx_pet_visits_visited_on on pet_visits(visited_on desc);
 ```
 
 ---

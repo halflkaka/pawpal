@@ -25,14 +25,16 @@ struct MainTabView: View {
             }
             .accessibilityIdentifier("Home")
 
-            Tab("发现", systemImage: "safari.fill", value: .discover) {
+            Tab("发现", systemImage: "magnifyingglass", value: .discover) {
                 NavigationStack {
                     ContactsView()
                 }
             }
             .accessibilityIdentifier("Discover")
 
-            Tab("发布", systemImage: "plus.app.fill", value: .create) {
+            // Use the outline `plus.app` so the glyph reads as a bordered
+            // square — matches the design's center "+" CTA.
+            Tab("发布", systemImage: "plus.app", value: .create) {
                 NavigationStack {
                     CreatePostView(authManager: authManager) {
                         createResetToken = UUID()
@@ -46,10 +48,12 @@ struct MainTabView: View {
 
             Tab("聊天", systemImage: "message.fill", value: .chats) {
                 NavigationStack {
-                    ChatListView()
+                    ChatListView(authManager: authManager)
                 }
             }
-            .badge(2)
+            // Badge stays off for now — unread counts need a per-thread
+            // last-read timestamp that isn't in the MVP schema. Realtime
+            // presence + unread lands in a follow-up PR.
             .accessibilityIdentifier("Chats")
 
             Tab("我的", systemImage: "person.crop.circle.fill", value: .me) {
@@ -63,8 +67,12 @@ struct MainTabView: View {
             }
             .accessibilityIdentifier("Pets")
         }
-        .tint(PawPalTheme.orange)
-        .toolbarBackground(PawPalTheme.surface, for: .tabBar)
+        // Accent now maps to the new brand warm-orange (#FF7A52).
+        .tint(PawPalTheme.accent)
+        // Let the native liquid-glass material show through on iOS 26.
+        // Using `.automatic` keeps the material tab bar with a subtle hairline
+        // rule, which matches the design's `rgba(0,0,0,0.08)` top border.
+        .toolbarBackground(.automatic, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .onChange(of: selectedTab) { oldValue, newValue in
             if oldValue != newValue {
