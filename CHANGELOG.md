@@ -6,6 +6,65 @@ Entries are in reverse chronological order.
 
 ---
 
+## 2026-04-18 — Build pet profile, chat, and virtual pet features ([#17](https://github.com/halflkaka/pawpal/pull/17))
+
+Major feature drop: full 2026 visual refresh across every primary screen, pet profile expansion with interactive virtual pet stage, real-time chat UI (local-only), follow lists, breed-aware dog avatars, and four Supabase migrations for visits, accessories, pet state, and chat.
+
+32 files changed, +9,472 / -698 lines.
+
+### Visual Refresh
+- **New design system** — warm cream background (`#FAF6F0`), warm-orange accent (`#FF7A52`), serif wordmarks, new token aliases (`accent`, `accentSoft`, `accentGlow`)
+- **Feed redesign** — polaroid-style floating post cards with alternating tilt, stories rail for followed pets, fixed header
+- **Profile redesign** — featured pet stage with VirtualPetView, tappable follower/following stats, pet strip
+- **Tab bar** — updated icons and layout
+
+### New Features
+- **Virtual pet** — interactive stage with hunger/energy/mood bars, feed/pet/play actions, thought bubbles, tap-to-boop, accessory dress-up; state persisted via `pet_state` table
+- **Dog avatar** — breed-aware vector illustrations as photo fallback
+- **Pet character** — species-specific illustrations for non-dog pets
+- **Follow lists** — tap 粉丝 / 关注 to see follower/following lists with DM shortcuts
+- **Chat UI** — redesigned `ChatListView` + new `ChatDetailView`; local-only, no backend yet
+- **Pet visits + boops** — records profile visits and boop counts; migration 013
+- **Pet accessories** — bow/hat/glasses persisted to DB; migration 014
+
+### Database Migrations
+- 013: `pet_visits`, `boop_count`, `increment_pet_boop_count` RPC
+- 014: `accessory` column on `pets`
+- 015: `pet_state` table for persisted virtual pet bars
+- 016: `conversations` + `messages` tables for chat
+
+---
+
+## 2026-04-17 — Refine feed header and action bar ([#16](https://github.com/halflkaka/pawpal/pull/16))
+
+Keeps the PawPal feed header fixed while only the post list scrolls. Restyled the post action row to a lighter Instagram-style layout with tighter icon and count sizing.
+
+1 file changed, +91 / -77 lines.
+
+### UI
+- **Fixed feed header** — header stays pinned at top as the feed list scrolls
+- **Lighter action row** — reaction chips restyled to a flatter, less bulky layout
+- **Tighter icon/count sizing** — reduced padding and font size on reaction icons and counts
+
+---
+
+## 2026-04-17 — Polish feed refresh and post cards ([#15](https://github.com/halflkaka/pawpal/pull/15))
+
+Improves feed refresh reliability by moving secondary engagement refreshes to background follow-up loads, so pull-to-refresh dismisses promptly. Polishes post cards with better avatar/header treatment, expandable captions, and a cleaner reaction row.
+
+2 files changed, +205 / -129 lines.
+
+### Performance
+- **Background engagement refresh** — likes and comment count syncs moved to follow-up async loads; pull-to-refresh dismisses as soon as posts land
+
+### UI
+- **Expandable captions** — long captions truncate with a "展开" tap to expand inline
+- **Post card header** — improved avatar sizing and owner info spacing
+- **Reaction row** — tightened spacing and cleaner icon/count layout
+- **Skeleton loading** — improved placeholder fidelity while feed loads
+
+---
+
 ## 2026-04-18 — Chat entry points + follow lists + grid badge fix (#46)
 
 ## Summary
