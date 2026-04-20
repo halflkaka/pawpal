@@ -1,7 +1,7 @@
 import Foundation
 import Supabase
 
-struct RemoteProfile: Codable, Equatable {
+struct RemoteProfile: Codable, Equatable, Hashable {
     let id: UUID
     var username: String?
     var display_name: String?

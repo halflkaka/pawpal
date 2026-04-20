@@ -48,6 +48,13 @@ final class FollowService: ObservableObject {
                 .from("follows")
                 .insert(["follower_user_id": me.uuidString, "followed_user_id": targetID.uuidString])
                 .execute()
+            // Instrumentation: viral-loop signal — emitted only on
+            // the follow success path (NOT on unfollow). The
+            // `target_user_id` dimension lets us cohort "most
+            // followed pets' owners" without a separate read pass.
+            AnalyticsService.shared.log(.follow, properties: [
+                "target_user_id": .string(targetID.uuidString)
+            ])
         } catch {
             followingIDs.remove(targetID)
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

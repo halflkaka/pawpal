@@ -6,6 +6,749 @@ Entries are in reverse chronological order.
 
 ---
 
+## 2026-04-19 — Fix infinite-recursion RLS policy on `playdate_participants`
+
+## Summary
+
+Hot-fix for `42P17: infinite recursion detected in policy for relation "playdate_participants"` thrown on any SELECT against the junction table from an authenticated client. Migration 028's SELECT policy self-referenced the same table in its predicate; the subquery re-entered the policy, Postgres detected the cycle at plan time and bailed.
+
+1 file, +~95 / -0 lines (1 new migration; no Swift changes).
+
+## Changes
+
+### Backend
+- **`supabase/029_fix_pdp_rls_recursion.sql`** (new) — replaces the self-referential `using (exists (select 1 from playdate_participants pdp2 where …))` predicate with a call to a new `SECURITY DEFINER` helper function `public.user_is_playdate_participant(pd_id uuid, uid uuid)`. `SECURITY DEFINER` runs the function as its owner (postgres), bypassing RLS on the inner lookup — the recursion is broken. Same semantics as the original policy: any user with a junction row on a playdate can see ALL rows on that playdate (needed so user A can see user B's acceptance status in a group playdate). Also rewrites the supplementary `playdates_select_participants_via_junction` policy on `public.playdates` to route through the same helper (was previously `exists (select 1 from playdate_participants …)` which, while not self-recursive, still hit the junction's broken policy transitively). Helper: `revoke all from public` + `grant execute to authenticated`. Ends with `notify pgrst, 'reload schema';`. Idempotent (`create or replace function`, `drop policy if exists` + `create policy`).
+
+### Operator notes
+- Apply `029_fix_pdp_rls_recursion.sql` after `028_playdate_participants.sql`. Re-applying is a no-op. No data migration.
+- The claim in `028`'s inline comment that the self-referential policy was "safe because `auth.uid()` is a constant" was wrong — Postgres RLS applies a table's policies to EVERY query against the table, including subqueries inside the policy itself. Leaving the historical migration as-is for the audit trail; the correct pattern (helper + `SECURITY DEFINER`) is the one to carry forward.
+
+---
+
+## 2026-04-19 — Group playdates (1 + 1-2 invitees)
+
+## Summary
+
+Closes the "group playdates (>2 pets)" follow-up seam listed in the 2026-04-18 Playdates MVP direction doc. A playdate can now invite 2 pets (hard cap of 3 total — 1 proposer + 2 invitees), each with their own per-pet accept/decline status. The composer gains a "再邀请一只" affordance (max 2 chips), the detail view renders a horizontal scroll of all participants with per-pet status chips + a "发起人" badge on the proposer, and a per-pet picker sheet appears when the viewer owns multiple invitee rows on the same playdate. The change is additive — the legacy `proposer_pet_id` / `invitee_pet_id` columns remain for backward compatibility, and `playdates.status` is now a trigger-derived aggregate over the new junction rows.
+
+7 files, +~780 / -30 lines (1 new migration, 1 new Swift model, 3 Swift edit sites, 2 new Swift subviews / helpers, 3 doc updates, 1 CHANGELOG entry).
+
+## Changes
+
+### Backend
+- **`supabase/028_playdate_participants.sql`** (new) — junction table `public.playdate_participants` with composite PK `(playdate_id, pet_id)`, `role text check (role in ('proposer','invitee'))`, `status text check (status in ('proposed','accepted','declined','cancelled'))`, and supporting indexes `idx_pdp_user / idx_pdp_pet / idx_pdp_status`. Backfill seeds every legacy `playdates` row with two participant rows (`on conflict do nothing`): proposer becomes `'accepted'` (or `'cancelled'` when the parent is cancelled); invitee mirrors the parent status with `'completed'` collapsed to `'accepted'`. Trigger-derived aggregate status on the parent via `derive_playdate_status(pd_id)` + AFTER INSERT/UPDATE trigger `sync_playdate_status_from_participants` — rules: `completed` stays `completed` (preserves the migration-026 sweeper); proposer-cancelled → `cancelled`; any invitee `declined` → `declined`; proposer + all invitees `accepted` → `accepted`; otherwise `proposed`. BEFORE INSERT trigger `enforce_playdate_participant_count` rejects inserts when the existing count for the same playdate already equals 3. RLS: self-referential SELECT (`auth.uid() = user_id OR auth.uid() IN (select user_id from playdate_participants where playdate_id = ...)`) — no client INSERT/UPDATE/DELETE policies. Supplementary SELECT policy on `playdates` so any participant can read the parent row (migration 023's policy only covered proposer + primary invitee). Three SECURITY DEFINER RPCs: `accept_playdate_participant(pd_id uuid, my_pet_id uuid)`, `decline_playdate_participant(pd_id uuid, my_pet_id uuid)`, `cancel_playdate_as_proposer(pd_id uuid)` — each verifies caller ownership via a `pets.owner_user_id = auth.uid()` join before mutating, with `GRANT EXECUTE … TO authenticated`. The cancel RPC cascades every still-pending participant row to `cancelled` in one transaction. `notify pgrst, 'reload schema';` at the end.
+
+### iOS
+- **`PawPal/Models/RemotePlaydateParticipant.swift`** (new) — `struct RemotePlaydateParticipant: Codable, Identifiable, Hashable` mapping one junction row. Fields: `playdate_id`, `pet_id`, `user_id`, `role`, `status`, `joined_at`, plus optional PostgREST embeds `pets: RemotePet?` and `profiles: RemoteProfile?`. Composite synthetic `id: "\(playdate_id)-\(pet_id)"`. Status helpers: `isProposerRow`, `isInviteeRow`, `isAccepted`, `isDeclined`, `isCancelled`, `isProposed`. Also adds `extension RemoteProfile: Hashable {}` since the auto-synth is available on `RemoteProfile`'s stored properties (deliberately not `Sendable` — `RemoteProfile` has `var` fields, same rule as `RemotePlaydate`).
+- **`PawPal/Models/RemotePlaydate.swift`** — added `let playdate_participants: [RemotePlaydateParticipant]?` (optional — list fetches that skip the embed still decode). Added computed helpers `var participants`, `var participantPets`, `var isGroupPlaydate` (true when embed count > 2). Documentation block explains the embed is non-nil on detail / list fetches that opt in, nil on compact loads.
+- **`PawPal/Services/PlaydateService.swift`** — new `propose(proposerPetID:, inviteePets: [PetRef], …)` signature (2-invitee cap, guard against empty array); keeps the legacy `propose(…, inviteePetID:, inviteeUserID:, …)` overload which wraps into a one-element `[PetRef]` so 1:1 call sites compile unchanged. Both code paths: insert the parent `playdates` row first (legacy `invitee_pet_id` / `invitee_user_id` columns take the first invitee — preserves 1:1 fast-path reads), then call a new private `insertParticipants(playdateID:, proposerPetID:, proposerUserID:, inviteePets:)` that bulk-inserts proposer (`'accepted'`) + one row per invitee (`'proposed'`), then re-fetches via `fetch(id:)` to pick up the embed. `proposeSeries(…)` takes `inviteePets: [PetRef]`, inserts junction rows sequentially per instance, re-fetches each with the embed. `fetch(id:)` embed updated to `*, playdate_participants(*, pets(*), profiles(*))`. Three new RPC wrappers — `acceptInvitation(playdateID:, petID:)`, `declineInvitation(playdateID:, petID:)`, `cancelAsProposer(playdateID:)` — each calls `.rpc("…", params: Params(…))` (matches `PetsService.increment_pet_boop_count`), re-fetches, and posts `.playdateDidChange`. New `struct PetRef: Hashable, Sendable { petID: UUID; ownerUserID: UUID }` with a `RemotePet` convenience initializer.
+- **`PawPal/Views/PlaydateComposerSheet.swift`** — new `struct ComposerInvitee: Identifiable, Hashable`. New `@State private var invitees: [ComposerInvitee] = []`, seeded from the entry-point `inviteePet` / `inviteeUserID` on appear (1:1 entry paths still work). New `inviteesSection` between proposer and time: a `FlowLayout` of chips (pet avatar + name + × remove — remove hidden when only one invitee remains) with a "再邀请一只" button when `invitees.count < 2`. `navigationTitle` becomes computed — "发起多猫约玩" when two invitees are selected, "约遛弯" otherwise. `canSend` requires `!invitees.isEmpty`. `submit()` maps invitees to `[PetRef]` and calls the new propose signature. New `AddInviteeSheet` subview presents a search field + list of pets with `open_to_playdates = true`, excluding already-added pets and the viewer's own proposer pet. Minimal `FlowLayout: Layout` implementation handles the wrap-flow chip row.
+- **`PawPal/Views/PlaydateDetailView.swift`** — replaced the stacked two-avatar `headerStrip` with a horizontal `ScrollView` of `participantCell(row:)` entries rendered from a new `participants: [RemotePlaydateParticipant]` computed property (uses the embed when available, falls back to synthesising two rows from the legacy columns so 1:1 cache hits without the embed still render). Each cell shows avatar + name + per-pet status chip (same tint family as the top-level status pill) + a small "发起人" badge pinned on the proposer's avatar. `titleText` now collapses to "A 和 朋友们 遛弯" for group playdates. New `viewerInviteeRows` computed property + `enum ParticipantAction { case accept, decline }` + `pendingPetPickerAction: ParticipantAction?` drive a `.sheet(item:)`-presented `ParticipantPetPickerSheet` when the viewer owns multiple invitee rows on the same playdate ("为哪只毛孩接受邀请？" / "为哪只毛孩婉拒？"). Accept/Decline buttons route through a new `handleInviteeAction(_:)` helper — 0 pending rows → legacy id-less RPC, 1 pending → single RPC call, ≥ 2 pending → picker sheet. Proposer-side cancel now calls `cancelAsProposer(playdateID:)`; decline on group playdates shows "已婉拒" toast without dismissing when other invitees are still pending. Series cancel menu + `seriesChip` preserved unchanged. New `ParticipantPetPickerSheet` private struct owns the picker UI (`.medium` detent, per-row pet avatar + name + status label + tap-to-resolve; dimmed checkmark on rows that already settled).
+
+### Docs
+- **`docs/database.md`** — added a `playdate_participants` section (composite PK, cap rationale, status derivation rules, RLS via SECURITY DEFINER RPCs, supplementary SELECT policy on `playdates`, backfill semantics, PostgREST embed string). Updated the `playdates` section to note the new junction + trigger-derived aggregate status.
+- **`docs/decisions.md`** — new entry "Group playdates — junction table, not array columns" explaining per-pet status, legacy column preservation, trigger-derived aggregate, hard cap at 3, SECURITY DEFINER RPCs, and second-invitee visibility.
+- **`docs/scope.md`** — marked group playdates as landed 2026-04-19; noted the remaining Playdates follow-ups (Discover rail / map mode, realtime subscription) are unaffected; called out that group-chat for >3 pets stays out of scope.
+
+## Validations
+- Migration re-read for SQL correctness, idempotency (`create table if not exists`, `create index if not exists`, `on conflict do nothing` on backfill, trigger / function `create or replace`), and RLS airtightness (no client INSERT/UPDATE/DELETE on junction; SECURITY DEFINER RPCs verify pet ownership).
+- Swift compile check by inspection — `RemotePlaydate` embed decodes as optional so legacy fetches still parse; `propose(…, inviteePetID:, …)` legacy overload preserved for 1:1 call sites; RPC calls match the `.rpc("name", params: Params(…))` pattern used in `PetsService.increment_pet_boop_count`; `participants` computed property's legacy-fallback synthesises two rows from denormalised columns so 1:1 cache hits render without the embed.
+- Manual trace (1:1 backfill): existing 1:1 row with parent `status = 'accepted'` → backfill inserts proposer (`accepted`) + invitee (`accepted`); detail view reads embed, shows 2-cell scroll with two "已接受" chips; top-level pill still reads "已确认"; Accept / Decline hidden because no pending rows.
+- Manual trace (group accept flow, 3 pets): proposer inserts parent + 3 junction rows (proposer `accepted`, invitee A `proposed`, invitee B `proposed`); invitee A taps Accept → RPC flips A row to `accepted`; derive recomputes → still `proposed` (B pending); invitee B taps Accept → derive recomputes → `accepted`; trigger writes `playdates.status = 'accepted'`.
+- Manual trace (split decline): invitee A declines → A row `declined`; derive returns `declined`; parent `playdates.status` → `declined`; invitee B's detail view now shows "对方婉拒了" pill with no action buttons.
+- ⚠️ Build verification deferred — user runs `xcodebuild` manually (sandbox is Linux; no Xcode toolchain).
+
+## Caveats
+
+- **Hard cap of 3 is enforced server-side.** The BEFORE INSERT trigger rejects the 4th participant row. Clients should never try — the composer limits chips to 2 — but if a crafted request gets through, the RPC / INSERT errors with a clear message.
+- **Backfill collapses `completed` invitees to `accepted`.** A completed 1:1 playdate's invitee row is backfilled as `accepted` (not `completed` — that's a parent-level aggregate). If a future query needs per-pet completion truth, introduce a `completed` row-level status at that time; not worth it now.
+- **The composer's first invitee still populates the parent row's legacy columns.** Choosing which invitee is "primary" is arbitrary for group playdates but it keeps every legacy 1:1 reader honest. A future cleanup could drop these columns once all call sites migrate to the junction — that's a separate migration.
+- **Per-pet picker when viewer owns multiple invitee rows.** Rare (needs a user with 2 pets, both invited to the same group playdate) but possible. Silently picking the first row would leave the second pet's row stuck on `proposed` with no UX path to resolve it — the picker makes the choice explicit.
+- **Second-invitee decline does NOT auto-dismiss the detail view.** For 1:1 the behaviour was "decline → pop back" because the playdate was over for that viewer. For group playdates we stay on the detail because the other invitees' status is still interesting.
+
+---
+
+## 2026-04-19 — Weekly-repeat playdates (×4)
+
+## Summary
+
+Closes the "repeat / weekly playdates" follow-up seam listed in the 2026-04-18 Playdates MVP direction doc. One composer toggle ("每周重复") now fans a single proposal out to 4 sibling playdates linked by a shared `series_id`, and the detail view exposes a "取消整个系列" affordance alongside the existing single-instance cancel. The change is additive and orthogonal to the future group-playdate participant junction (#23) — a group playdate can also belong to a series, and the junction will simply have rows per series instance.
+
+6 files, +~260 / -10 lines (1 new migration, 3 Swift edit sites, 2 doc updates).
+
+## Changes
+
+### Backend
+- **`supabase/027_playdate_series.sql`** (new) — additive columns `series_id uuid` (nullable) and `series_sequence smallint` (nullable, CHECK `series_sequence is null or between 1 and 4`, gated on `pg_constraint` for idempotency) on `public.playdates`. Partial index `idx_playdates_series on playdates(series_id) where series_id is not null` keeps the common one-off path lean. No RLS changes — existing proposer/invitee policies from migration 023 continue to gate visibility. `series_id` is client-minted (Swift `UUID()`) so the batch INSERT shares one uuid without an extra round-trip. No FK and no parent `playdate_series` table — a series is implicitly the set of rows sharing the uuid. `notify pgrst, 'reload schema';` at the end.
+
+### iOS
+- **`PawPal/Models/RemotePlaydate.swift`** — added `let series_id: UUID?` and `let series_sequence: Int?` with the synthesised `Codable` handling both missing-key and explicit-null as `nil`. Added `var isSeriesInstance: Bool { series_id != nil }` computed helper so call sites read as intent.
+- **`PawPal/Services/PlaydateService.swift`** — `propose(...)` gains a `repeatWeekly: Bool = false` default-false param; when true it routes to a new private `proposeSeries(...)` helper that mints a client-side `UUID()` for `series_id`, builds 4 `SeriesInsert` payloads with `scheduled_at = base + 7d·i` and `series_sequence = i+1`, bulk-inserts via a single PostgREST call, warms the cache for all 4 rows, and returns them sorted by sequence (the caller picks `.first` for detail navigation). New public `cancelSeries(seriesID:)` runs an optimistic bulk update — `UPDATE playdates SET status = 'cancelled' WHERE series_id = $1 AND status IN ('proposed','accepted') AND scheduled_at > now() AND (proposer_user_id = me OR invitee_user_id = me)` — with cache-level rollback on failure. `.playdateProposed` analytics fires once per series (one high-intent action, not four).
+- **`PawPal/Views/PlaydateComposerSheet.swift`** — new `repeatWeeklySection` between `timeSection` and `locationSection`: `Toggle` bound to a new `@State private var repeatWeekly: Bool = false`. When ON, shows the helper line "将创建 4 场约玩，每周一次" and a read-only `FlowChipRow` of 4 amber chips previewing "M月d日 HH:mm" for each week. `submit()` passes `repeatWeekly:` through. Toggle flip fires a `.light` haptic.
+- **`PawPal/Views/PlaydateDetailView.swift`** — new amber `seriesChip(sequence:)` pinned under the title reading "系列约玩 · 第 X 场 / 共 4 场", rendered only when `current.isSeriesInstance`. When the row is a series instance the cancel affordance becomes a `Menu` ("仅取消本次" / "取消整个系列"), each funnelled through its own `.confirmationDialog` for accidental-tap safety. The series dialog copy calls out that past / finalised instances are not affected. New `cancelSeries()` private method calls `PlaydateService.cancelSeries(seriesID:)`, shows a toast, and dismisses. Haptic on open is `.medium` — matches the existing single-instance button.
+
+### Docs
+- **`docs/database.md`** — documented the two new columns, partial index, no-FK rationale, cancel-series predicate, and the orthogonality with the future group-playdate participant junction.
+- **`docs/scope.md`** — removed "weekly playdates" from the Playdates follow-ups deferred list; added a pointer back to this entry.
+
+## Validations
+- Migration re-read for SQL correctness and idempotency (ALTER IF NOT EXISTS + `pg_constraint` gate on CHECK).
+- Swift compile check by inspection — new optional decoding, Encodable payloads, and Supabase filter chain (`.eq`, `.in(values:)`, `.gt(value:)`, `.or`) match existing patterns in `PlaydateService` / `PostsService`.
+- ⚠️ Build verification deferred — user runs `xcodebuild` manually (sandbox is Linux; no Xcode toolchain).
+
+## Caveats
+
+- **DST shift.** The 4 instances are spaced a fixed `7 × 24 × 60 × 60` seconds apart rather than "every Saturday at 15:00 local time". If the user spans a DST boundary (rare in mainland China — CST has no DST — but relevant for HK / Taipei / diaspora users) the wall-clock time on week 3 or 4 can shift by ±1h. Acceptable for MVP; worth revisiting if we see feedback.
+- **Partial-failure after first insert.** `proposeSeries` sends a single bulk INSERT so PostgREST either lands all 4 rows or none. We do not attempt a best-effort delete of already-inserted rows on a mid-transaction abort, because the trigger-driven `queue_notification` path has already fired on any successful row and the race isn't worth the code.
+- **Cache rollback on cancel-series.** The optimistic rollback snapshot is the entire `playdates` dict (not just the affected rows). This is simpler than a diff-based rollback and the dict is tiny in practice — the few-KB copy is imperceptible on modern hardware.
+
+---
+
+## 2026-04-19 — Instrumentation: first-party event log (#57)
+
+## Summary
+
+Closes the Phase 6 "Instrumentation (D7, posts/DAU, sessions/week)" roadmap item. Phase 6 is now functionally complete — only deferred items (feed algorithm, App Store prep) remain. First-party event log only: no Firebase, no Mixpanel, no Amplitude, no Segment, no third-party analytics SDK. Migration 025 introduces `public.events` with airtight INSERT RLS and no SELECT path (analytics runs server-side as `service_role`). New `AnalyticsService.shared` singleton provides a fire-and-forget `log(_:properties:)` API; thirteen event kinds are wired across ten files.
+
+12 files, +~330 / -0 lines (1 new migration, 1 new Swift service, 10 Swift edit sites, 4 doc updates).
+
+## Changes
+
+### Backend
+- **`supabase/025_events.sql`** (~95 lines, new) — `public.events` table: `id uuid default gen_random_uuid() primary key`, `user_id uuid references profiles(id) on delete set null` (nullable so signed-out opens can still emit), `kind text not null`, `properties jsonb not null default '{}'::jsonb`, `client_at timestamptz not null` (iOS-supplied), `server_at timestamptz not null default now()`. Indexes: `events_user_at_idx (user_id, server_at desc)` for per-user retention queries, `events_kind_at_idx (kind, server_at desc)` for funnel / rate queries. RLS enabled with a single policy: `events_insert_self` allowing INSERT when `user_id is null OR auth.uid() = user_id`. No SELECT, UPDATE, or DELETE policies — analytics queries run server-side as `service_role`. Header comment authoritatively lists the 13 event kinds shipped in this PR + the `TODO(analytics-retention)` 12-month cutoff seam.
+
+### iOS
+- **`PawPal/Services/AnalyticsService.swift`** (~220 lines, new) — `@MainActor final class AnalyticsService` singleton. Public API: `log(_ kind: Kind, properties: [String: AnalyticsValue] = [:])` dispatches a detached `Task`, reads the session id off `SupabaseConfig.client.auth.currentSession?.user.id`, serialises `properties` to jsonb via the custom `AnalyticsValue` sum-type enum, and inserts with `ignoreDuplicates: false`. Swallows failures with a `[Analytics] … 失败` console line. `logSessionStart()` client-side-debounces emission to at most one per 30 minutes via a private `lastSessionAt: Date?`. 13-case `enum Kind: String` (appOpen, sessionStart, signIn, signUp, postCreate, storyPost, storyView, playdateProposed, playdateAccepted, shareTap, follow, like, comment) with `rawValue` using snake_case to match server-side conventions. `AnalyticsValue` is `Sendable + Encodable` and supports `.string`, `.int`, `.double`, `.bool` for jsonb encoding. `TODO(analytics-opt-out)` seam at the top of the file for v1.5.
+- **`PawPal/PawPalApp.swift`** (line 33) — `AnalyticsService.shared.log(.appOpen)` in App struct `init()`. Fires once per process launch.
+- **`PawPal/ContentView.swift`** (lines 25, 34) — `AnalyticsService.shared.logSessionStart()` on `.task` (initial render with signed-in session) + `.onChange(of: scenePhase) == .active` (foreground). Debounced to 30 min.
+- **`PawPal/Services/AuthManager.swift`** (lines 81–82, 106–107) — success paths emit `.signIn` / `.signUp` with `properties = ["method": "password"]` followed by `logSessionStart()`. Failure paths do NOT emit.
+- **`PawPal/Services/PostsService.swift`** (lines 391, 502, 679) — `.postCreate` with `["image_count": .int(n), "has_caption": .bool(nonempty)]` on createPost success; `.like` with `["post_id": .string(uuid)]` on the insert branch only (not unlike); `.comment` with `["post_id": .string(uuid)]` on addComment success.
+- **`PawPal/Services/StoryService.swift`** (lines 254, 393) — `.storyPost` on postStory success; `.storyView` with `["story_id": .string(uuid)]` after a `recordView` succeeds. `storyView` dedupe is server-side via the `story_views` PK, not client-side.
+- **`PawPal/Services/PlaydateService.swift`** (lines 177, 196) — `.playdateProposed` on propose success; `.playdateAccepted` on accept success. Decline / cancel / markCompleted do NOT emit.
+- **`PawPal/Services/FollowService.swift`** (line 55) — `.follow` with `["target_user_id": .string(uuid)]` on follow success (not unfollow).
+- **`PawPal/Views/PostDetailView.swift`** (line 132), **`PetProfileView.swift`** (line 274), **`ProfileView.swift`** (line 622) — `.shareTap` with `["surface": .string("post" / "pet" / "profile")]` on the ShareLink `.simultaneousGesture(TapGesture().onEnded)`. Intent signal (sheet surfaced), not completion.
+
+### Docs
+- **`ROADMAP.md`** — Phase 6 "Instrumentation" 🔲 → ✅ with feature line; current-state paragraph updated to reflect 2026-04-19 ship; stale "🔲 Story view counts / seen-by" line removed (already ✅ under Phase 4.5 since 2026-04-18).
+- **`docs/scope.md`** — "Instrumentation" entry added to Currently In Scope; notes the no-SDK constraint, the 13 event kinds, and the PII posture.
+- **`docs/decisions.md`** — new entry "First-party event log; no third-party analytics SDK" covering: why no SDK (data ownership + PII exposure + app-size / privacy manifest hygiene), why `events` is a single table with `jsonb properties` (schema-additive, zero-migration kind evolution), fire-and-forget semantics, `session_start` dedupe, v1.5 opt-out seam.
+- **`docs/database.md`** — new `events` table section at line 259 with column descriptions, index rationale, and RLS summary.
+- **`docs/known-issues.md`** — two new entries: known tradeoffs (free-text `kind`, unconstrained `properties` jsonb, no SELECT RLS, no retention cutoff, dual timestamps instead of clock correction, no opt-out UI, silent insert failures, in-process session dedupe, no cold-launch-signed-out `session_start`, no device / version dims, insert-only action emission, `share_tap` is intent not completion) and build verification pending with 14-item spot-check list.
+
+### Chinese copy
+- No user-facing copy. `[Analytics] … 失败` console string is developer-only.
+
+## Files Changed
+
+| File | Category | Change |
+| --- | --- | --- |
+| `supabase/025_events.sql` | Backend | New: events table + RLS + indexes |
+| `PawPal/Services/AnalyticsService.swift` | Services | New: fire-and-forget logger + Kind enum |
+| `PawPal/PawPalApp.swift` | App | `.appOpen` in init |
+| `PawPal/ContentView.swift` | Views | `logSessionStart` on task + scenePhase active |
+| `PawPal/Services/AuthManager.swift` | Services | `.signIn` / `.signUp` + `logSessionStart` |
+| `PawPal/Services/PostsService.swift` | Services | `.postCreate` / `.like` / `.comment` |
+| `PawPal/Services/StoryService.swift` | Services | `.storyPost` / `.storyView` |
+| `PawPal/Services/PlaydateService.swift` | Services | `.playdateProposed` / `.playdateAccepted` |
+| `PawPal/Services/FollowService.swift` | Services | `.follow` |
+| `PawPal/Views/PostDetailView.swift` | Views | `.shareTap` with `surface=post` |
+| `PawPal/Views/PetProfileView.swift` | Views | `.shareTap` with `surface=pet` |
+| `PawPal/Views/ProfileView.swift` | Views | `.shareTap` with `surface=profile` |
+| `ROADMAP.md` | Docs | Phase 6: instrumentation ✅; stale stories line removed |
+| `docs/scope.md` | Docs | New Currently-In-Scope entry |
+| `docs/decisions.md` | Docs | "First-party event log; no third-party SDK" |
+| `docs/database.md` | Docs | New events table section |
+| `docs/known-issues.md` | Docs | Tradeoffs + build verification pending |
+
+## Validations
+
+- ✅ Grep verification: `AnalyticsService.shared.log` returns 13 hits across the 10 edit sites (PawPalApp, ContentView, AuthManager ×2, PostsService ×3, StoryService ×2, PlaydateService ×2, FollowService, PostDetailView, PetProfileView, ProfileView). `logSessionStart` returns 4 call sites (AuthManager ×2, ContentView ×2). All match the PR's wire-up plan.
+- ✅ No PII leak: `properties` jsonb values in this PR are all UUIDs, ints, bools, or the string `"password"` / `"post"` / `"pet"` / `"profile"` — no user-authored text (captions, comments, chat bodies), no device / advertising id, no IP, no precise location.
+- ✅ RLS lockdown: `events` table has no SELECT / UPDATE / DELETE policies; only INSERT is allowed, and only for the caller's own `user_id` (or null for pre-auth events). Analytics consumers must use `service_role`.
+- ✅ Fire-and-forget: every `log(_:)` call dispatches `Task.detached`; no call site is `await`-blocked on analytics. Verified by reading the 13 edit sites.
+- ✅ Session dedupe: `logSessionStart()` holds a 30-minute window in-process via `lastSessionAt`; confirmed in `AnalyticsService.swift:140`.
+- ✅ Design: no UI / design tokens touched; analytics is invisible.
+- ⚠️ Build not verified in this sandbox (no `xcodebuild`).
+- 🔲 Manual smoke: cold launch → `app_open` + `session_start` land; sign out → sign in → `sign_in` + `session_start` land; create post with 2 images → `post_create` with `image_count=2`; tap share on post → `share_tap` with `surface=post`; propose + accept a playdate → both events land; RLS rejection on spoofed `user_id` inserts → silent `[Analytics] … 失败` in console.
+- 🔲 Deferred: opt-out UI (v1.5 seam reserved), 12-month retention cutoff cron, `app_version` dim, net-follow / net-like undo events, share-sheet completion signal (no iOS API), device / locale dims.
+
+---
+
+## 2026-04-19 — Breed / city cohort surfaces (#56)
+
+## Summary
+
+Closes the Phase 6 "Breed / city cohort surfaces" roadmap item. Breed and city pills on `PetProfileView` are now tappable — they push a new `PetCohortView` that renders a paginated 2-column grid of all PawPal pets matching the breed or city. The existing Discover "与 X 相似的毛孩子" and "X 的毛孩子" rails pick up a "查看全部" header link that routes to the same cohort view. Two new `PetsService` methods back the query. No schema change — breed and city remain free-text columns on `pets`; normalisation is explicitly deferred.
+
+6 files, +~580 / -~30 lines (1 new Swift view, 1 Swift service edit, 2 Swift view edits, 2 doc updates).
+
+## Changes
+
+### iOS
+- **`PawPal/Services/PetsService.swift`** (+90 lines, 817 → 907) — two new methods. `fetchPetsByBreed(_:excludingOwnerID:limit:offset:)` and `fetchPetsByCity(_:excludingOwnerID:limit:offset:)` — trim the input, bail early on empty, apply `.eq("breed" or "home_city", value:)` + optional `.neq("owner_user_id", value:)`, order `created_at desc`, paginate via `.range(offset, to: offset + limit - 1)`. Log + return `[]` on failure, matching the existing `fetchSimilarPets` / `fetchPopularPets` / `fetchNearbyPets` pattern. Default `limit = 24`, `offset = 0`.
+- **`PawPal/Views/PetCohortView.swift`** (369 lines, new) — single view handles both breed and city cohorts via `enum Kind: Hashable { case breed(String), case city(String) }`. Computed `titleZh` (`"{breed} 的毛孩子"` / `"{city} 的毛孩子"`) and `emptyCopyZh`. `LazyVGrid` 2-column layout with 12pt gutter, pageSize = 24, offset pagination, bottom-reached autoload via `.onAppear` on the tail row, pull-to-refresh resets page counter. Loading states: centered `ProgressView` on initial load; muted `加载中…` footer during pagination; centered empty copy when no rows; error empty state. Private `PetCohortCell` uses `PawPalTheme` tokens (`card`, `cardSoft`, `hairline`, `softShadow`, `orangeGlow`, `accent`), renders 64pt avatar + name + breed-or-city secondary + optional 🔥 boop pill when `boop_count > 0`. `UIImpactFeedbackGenerator(style: .light)` on cell tap.
+- **`PawPal/Views/PetProfileView.swift`** (+64 lines, 1316 → 1380) — breed pill now renders as `breedCohortPill(breed:)` wrapping the existing `PawPalPill` content in a `NavigationLink(value: PetCohortView.Kind.breed(breed))` with a trailing `chevron.right` (10pt) inside the capsule. City row converted to `cityCohortPill(city:)` (location pin + text + chevron). Both attach `UIImpactFeedbackGenerator(style: .light)` via `.simultaneousGesture(TapGesture())`. Added `.navigationDestination(for: PetCohortView.Kind.self)` pushing `PetCohortView` with the viewer's `currentUserID` as `excludingOwnerID`.
+- **`PawPal/Views/DiscoverView.swift`** (+55 lines, 841 → 896) — `railSection(...)` helper grew an optional `seeAll: PetCohortView.Kind?` parameter that renders a "查看全部" + `chevron.right` accent-coloured `NavigationLink` on the rail header's trailing edge. Wired into `similarRail` (falls through to `.breed(featuredPet.breed)` when non-empty; nil otherwise — no link over wrong route) and `nearbyRail` (`.city(nearbyCity)`; nil when the rail itself hides). Added `.navigationDestination(for: PetCohortView.Kind.self)` at the Discover stack root.
+
+### Docs
+- **`ROADMAP.md`** — Phase 6 "Breed / city cohort surfaces" 🔲 → ✅ with feature line; current-state paragraph updated to reflect 2026-04-19 ship. Only "instrumentation" remains in Phase 6's 🔲 column.
+- **`docs/scope.md`** — "Breed / city cohort surfaces" entry added to Currently In Scope.
+- **`docs/known-issues.md`** — two new entries: known tradeoffs (free-text columns, no diacritic / case folding, offset vs cursor pagination, no realtime, no empty-state CTA) and build verification pending with 10-item spot-check list.
+
+### Chinese copy
+- **Title (breed)**: `{breed} 的毛孩子` e.g. `柴犬 的毛孩子`
+- **Title (city)**: `{city} 的毛孩子` e.g. `上海 的毛孩子`
+- **Empty (breed)**: `还没有 {breed} 在 PawPal 上 🐾`
+- **Empty (city)**: `还没有 {city} 的毛孩子在 PawPal 上 🐾`
+- **Pagination footer**: `加载中…`
+- **Rail link**: `查看全部`
+
+## Files Changed
+
+| File | Category | Change |
+| --- | --- | --- |
+| `PawPal/Services/PetsService.swift` | Services | `fetchPetsByBreed` + `fetchPetsByCity` |
+| `PawPal/Views/PetCohortView.swift` | Views | New: 2-col grid + offset pagination + pull-to-refresh |
+| `PawPal/Views/PetProfileView.swift` | Views | Breed + city pills now tappable cohort links |
+| `PawPal/Views/DiscoverView.swift` | Views | "查看全部" link on similar + nearby rails |
+| `ROADMAP.md` | Docs | Phase 6: cohort surfaces ✅ |
+| `docs/scope.md` | Docs | New Currently-In-Scope entry |
+| `docs/known-issues.md` | Docs | Tradeoffs + build verification pending |
+
+## Validations
+
+- ✅ Grep verification: `PetCohortView` is referenced from `PetProfileView` (breedCohortPill + cityCohortPill NavigationLinks, navigationDestination) and `DiscoverView` (similarSeeAllKind + nearbySeeAllKind + navigationDestination). `fetchPetsByBreed` / `fetchPetsByCity` defined in `PetsService.swift` and called only from `PetCohortView.swift`'s dispatch switch.
+- ✅ No schema change — breed and city remain free-text columns on `pets`. No new migration.
+- ✅ Own-pet exclusion: cohort view passes `excludingOwnerID` downstream so the viewer's own pets don't show up in their own cohort search.
+- ✅ Design tokens: `PetCohortCell` uses `PawPalTheme.card / cardSoft / hairline / softShadow / orangeGlow / accent` — no hardcoded colors.
+- ⚠️ Build not verified in this sandbox (no `xcodebuild`).
+- 🔲 Manual smoke: tap breed pill → cohort pushes → scroll paginates → pull-to-refresh resets. Tap city pill → cohort pushes. "查看全部" links on DiscoverView rails also push.
+- 🔲 Deferred: breed / city normalisation (free-text columns), cursor pagination, realtime cohort updates, dropdown picker in the pet editor.
+
+---
+
+## 2026-04-18 — Story view counts / seen-by (#55)
+
+## Summary
+
+Closes the Phase 4.5 Stories MVP. Adds a `story_views` table (migration 024) with owner-only SELECT/DELETE RLS and a pet-ownership gate on INSERT. Story owners see a new "N 位看过" chip above the safe-area inset on their own stories, which opens a new `StoryViewersSheet` listing viewer pets (avatar + name + relative timestamp). Non-owners silently record one view receipt per story per session — no new UI. Viewing identity is the pet, not the user, consistent with PawPal's "pets are the social actors" design principle. Video stories remain the only deferred item in Phase 4.5. Decision rationale: `docs/decisions.md` → "Story view receipts are owner-visible only; pets are the viewer identity".
+
+7 files, +~715 / -~15 lines (1 new SQL migration, 1 new Swift model, 1 new Swift view, 2 Swift edits, 4 doc updates).
+
+## Changes
+
+### Backend
+- **`supabase/024_story_views.sql`** (155 lines, new) — `story_views` table with composite PK `(story_id, viewer_pet_id)`, denormalised `viewer_user_id` (matches the playdates pattern from migration 023), `ON DELETE CASCADE` on both FKs. `story_views_story_id_idx` composite index on `(story_id, viewed_at desc)`. RLS: SELECT + DELETE gated on the story's owner via a subquery against `stories`; INSERT gated on `auth.uid() = viewer_user_id` with a `SECURITY DEFINER` BEFORE INSERT trigger `story_views_gate_pet_ownership` enforcing that the viewer pet belongs to the caller (mirrors `playdates_gate_invitee_open`). No UPDATE policy — rows are immutable. Ends with `notify pgrst, 'reload schema';`.
+
+### iOS
+- **`PawPal/Models/RemoteStoryView.swift`** (84 lines, new) — row model with aliased PostgREST join (`viewer_pet:pets!viewer_pet_id(*)` → `viewer_pet` on the struct side). Manual `Codable` conformance to handle the aliased relation. Synthetic `id: String` = `"{story_id}-{viewer_pet_id}"` for `Identifiable` since the PK is composite.
+- **`PawPal/Services/StoryService.swift`** (+105 lines) — three new methods. `recordView(storyID:viewerPetID:)` does `supabase.from('story_views').upsert(...)` with `onConflict: "story_id,viewer_pet_id"` and `ignoreDuplicates: true` so repeat opens don't spam; reads `viewer_user_id` from the live session; silently early-exits on no session; logs+swallows any RLS error so the viewer UX never surfaces a toast. `viewerCount(storyID:)` is a head-count query (`HEAD` method with `Prefer: count=exact`) that returns 0 on any failure so the chip never crashes. `viewers(storyID:)` PostgREST SELECT with the embedded `viewer_pet` relation, sorted `viewed_at desc`, returns `[RemoteStoryView]`. Owner-only by RLS; non-owners get 0 rows.
+- **`PawPal/Views/StoryViewerView.swift`** (+149 lines) — new `@State recordedViewIDs: Set<UUID>` + `viewerCounts: [UUID: Int]` + `activeViewerSheetStoryID: StoryIdentifier?`. New `handleStoryBecameActive()` runs on `.onAppear` and `.onChange(of: petIndex/storyIndex)`, branches on `isOwner(of:)`: non-owners call `recordViewIfNeeded` (viewing-as-pet = `PetsService.shared.pets.first?.id`; skips silently if user has no pets); owners call `loadViewerCountIfNeeded` and render a new `viewerCountChip(for:)` overlay. Chip is a white glass pill with `eye.fill` + `"{N} 位看过"`; tap presents `StoryViewersSheet` via `.sheet(item: $activeViewerSheetStoryID)`. Private `StoryIdentifier` wrapper avoids a global `UUID: Identifiable` extension that would conflict with other `.sheet(item:)` call sites.
+- **`PawPal/Views/StoryViewersSheet.swift`** (239 lines, new) — owner-only sheet. `NavigationStack` wrapper; three-state `enum LoadState { case loading, loaded([RemoteStoryView]), error(String) }`. Header: centered title `看过这条 Story` + muted `{N} 位毛孩子看过` subtitle. Rows: pet avatar (AsyncImage with species-emoji fallback), pet name, Chinese relative timestamp (`刚刚` / `N 分钟前` / `N 小时前` / `昨天 HH:mm` / `yyyy-MM-dd` branches). Pull-to-refresh via `.refreshable`. Tap row → pushes `PetProfileView(pet:)` in the stack. Empty-state: `还没有人看过这条 Story` muted copy.
+
+### Docs
+- **`ROADMAP.md`** — Phase 4.5 "Seen by / view counts" 🔲 → ✅ with a long-form line enumerating the migration + service methods + UI surfaces. Current-state paragraph updated; "Stories MVP" label now reflects completion modulo video.
+- **`docs/scope.md`** — "Story view counts / seen-by" moved from deferred to "Currently In Scope — shipped 2026-04-18" with a detailed block.
+- **`docs/decisions.md`** — new entry **Story view receipts are owner-visible only; pets are the viewer identity**: owner-only SELECT/DELETE, pet as viewer identity, denormalised `viewer_user_id`, viewers can't self-redact, future ghost-mode path.
+- **`docs/database.md`** — added `story_views` table section (schema, RLS, dedupe, cascade) and the new index.
+- **`docs/known-issues.md`** — added Story view counts known tradeoffs (pets.first viewing-as default, silent RLS rejection, viewer can't self-redact, per-session dedupe semantics, viewerCount cache is presentation-lifetime, chip is not realtime) and Build verification pending with a 10-item spot-check list.
+
+### Chinese copy
+- **Chip** (owner-only overlay): `eye.fill` + `N 位看过`
+- **Sheet title**: `看过这条 Story`
+- **Sheet subtitle**: `N 位毛孩子看过`
+- **Empty state**: `还没有人看过这条 Story`
+- **Relative timestamps**: `刚刚` / `N 分钟前` / `N 小时前` / `昨天 HH:mm` / `yyyy-MM-dd`
+
+## Files Changed
+
+| File | Category | Change |
+| --- | --- | --- |
+| `supabase/024_story_views.sql` | Backend | New: `story_views` + RLS + pet-ownership trigger |
+| `PawPal/Models/RemoteStoryView.swift` | Models | New: viewer row model + synthetic `id` |
+| `PawPal/Services/StoryService.swift` | Services | `recordView` / `viewerCount` / `viewers` |
+| `PawPal/Views/StoryViewerView.swift` | Views | Record-on-mount + owner-only chip + sheet presenter |
+| `PawPal/Views/StoryViewersSheet.swift` | Views | New: owner-only viewer list sheet |
+| `ROADMAP.md` | Docs | Phase 4.5 seen-by ✅; current-state refresh |
+| `docs/scope.md` | Docs | Shipped block for story view counts |
+| `docs/decisions.md` | Docs | New entry: viewer privacy + pet-as-identity |
+| `docs/database.md` | Docs | `story_views` table + index |
+| `docs/known-issues.md` | Docs | Known tradeoffs + spot-check list |
+
+## Validations
+
+- ✅ Grep verification: `StoryService.recordView` called from `StoryViewerView.recordViewIfNeeded`; `StoryService.viewerCount` called from `StoryViewerView.loadViewerCountIfNeeded`; `StoryService.viewers` called from `StoryViewersSheet.load`; `StoryViewersSheet(storyID:)` presented via `.sheet(item:)` on `StoryViewerView`. `story_views` table referenced from the migration, service, and model. `RemoteStoryView` referenced from the model, service, and sheet.
+- ✅ RLS airtight: SELECT + DELETE owner-only via subquery; INSERT gated on `auth.uid() = viewer_user_id` PLUS a SECURITY DEFINER trigger for the pet-ownership gate. No UPDATE policy.
+- ✅ Cascade behavior: `ON DELETE CASCADE` on both FKs — viewer rows clean up with the story or the viewer pet.
+- ✅ Dedupe: composite PK + client-side `recordedViewIDs: Set<UUID>` both enforce "one row per (story, viewer_pet)" across the story's lifetime.
+- ✅ Non-owners see zero viewer UI — no chip, no sheet access.
+- ⚠️ Build not verified in this sandbox (no `xcodebuild`).
+- 🔲 Manual smoke: view as pet A on another user's story → `select count(*) from story_views where story_id = <id>` returns 1; re-open → still 1. Owner opens their story → chip renders with "1 位看过". Tap → sheet shows pet A's avatar + name + `刚刚`. Delete the story → `select count(*) from story_views where story_id = <id>` returns 0 (CASCADE).
+- 🔲 Deferred: ghost mode, realtime chip, "viewing as" pet picker, video stories.
+
+---
+
+## 2026-04-18 — External share-out: 微信 / 朋友圈 / 小红书 viral loop (#54)
+
+## Summary
+
+Closes the Phase 6 "External share-out" roadmap item. Adds iOS `ShareLink` affordances on `PostDetailView` and `PetProfileView` that produce `pawpal://post/<uuid>` and `pawpal://pet/<uuid>` URLs; refactors the existing `ProfileView` 分享主页 affordance to delegate through a new central `ShareLinkBuilder` so URL + Chinese message strings live in one place. `DeepLinkRouter` accepts `pawpal://u/<slug>` as an alias for `pawpal://profile/<uuid>`; uuid slugs round-trip today, handle-only slugs surface as a follow-up. No new dependencies, no WeChat SDK — the generic iOS share sheet covers WeChat, Moments, 小红书, Messages, Mail, and AirDrop without app-specific code. Universal links / associated domains are deliberately NOT in this PR — tied to the App Store prep phase.
+
+5 files, +~170 / -~15 lines (1 new service file, 1 router edit, 3 view edits).
+
+## Changes
+
+### iOS
+- **`PawPal/Services/ShareLinkBuilder.swift`** (81 lines, new) — static `struct ShareLinkBuilder` with URL + message builders. Methods: `postURL(postID:)` / `petURL(petID:)` / `profileURL(handle:userID:)` (handle slug preferred, uuid fallback, `https://pawpal.app` failsafe); `postShareMessage(petName:)` / `petShareMessage(petName:)` / `profileShareMessage(displayName:)` (Simplified Chinese). Docstring notes that `pawpal://u/<handle>` is a well-formed share artefact even when the recipient device can't yet resolve handles back to user ids — WeChat / 小红书 treat it as plain URL text.
+- **`PawPal/Services/DeepLinkRouter.swift`** (+17 / -6) — added `u` host case in the URL parser as an alias for `profile`. UUID slugs route to the existing profile route; non-UUID slugs currently log a dedicated follow-up line (handle→user lookup is a later PR) so external apps can still carry the URL without the router swallowing it silently.
+- **`PawPal/Views/PostDetailView.swift`** (+31) — `.toolbar { ToolbarItem(placement: .topBarTrailing) { shareButton } }` wrapping `ShareLink(item: ShareLinkBuilder.postURL(postID:), message: Text(ShareLinkBuilder.postShareMessage(petName:)))`. Visual styling matches the existing `ProfileView` chip: `square.and.arrow.up` glyph, white 90% circle background, hairline stroke, `.primaryText` foreground. `.simultaneousGesture(TapGesture().onEnded { UIImpactFeedbackGenerator(style: .light).impactOccurred() })` attaches the project-standard haptic.
+- **`PawPal/Views/PetProfileView.swift`** (+31) — symmetric toolbar treatment using `ShareLinkBuilder.petURL(petID:)` + `petShareMessage(petName:)`.
+- **`PawPal/Views/ProfileView.swift`** (+8 / -9) — `shareURLForSelf` and `shareMessage` computed properties now delegate to `ShareLinkBuilder.profileURL` / `profileShareMessage`. The 分享主页 chip (header action row) is unchanged at the call site.
+
+### Docs
+- **`ROADMAP.md`** — Phase 6: external share-out 🔲 → ✅, with a line describing the builder, the three share surfaces, the `pawpal://u/` alias, and the deferred universal-links work.
+- **`docs/scope.md`** — external share-out moved from "Currently In Scope — next up" to shipped; notes the handle-resolution follow-up.
+
+### Chinese copy
+- **Post share**: `来 PawPal 看看 {petName} 的动态吧 🐾` (falls back to `来 PawPal 看看这条动态吧 🐾` when petName is nil)
+- **Pet share**: `来 PawPal 认识一下 {petName} 🐾`
+- **Profile share** (unchanged from prior, now centralised): `来 PawPal 看看 {displayName} 的毛孩子吧 🐾`
+
+## Files Changed
+
+| File | Category | Change |
+| --- | --- | --- |
+| `PawPal/Services/ShareLinkBuilder.swift` | Services | New: URL + message builders for post / pet / profile |
+| `PawPal/Services/DeepLinkRouter.swift` | Services | `pawpal://u/` alias for `profile` |
+| `PawPal/Views/PostDetailView.swift` | Views | Toolbar `ShareLink` + haptic |
+| `PawPal/Views/PetProfileView.swift` | Views | Toolbar `ShareLink` + haptic |
+| `PawPal/Views/ProfileView.swift` | Views | Delegates through `ShareLinkBuilder` |
+| `ROADMAP.md` | Docs | Phase 6: external share-out ✅ |
+| `docs/scope.md` | Docs | Shipped; handle-resolution follow-up noted |
+
+## Validations
+
+- ✅ Grep verification: `ShareLinkBuilder` referenced from `PostDetailView`, `PetProfileView`, `ProfileView`, `DeepLinkRouter` (doc), and the file itself. `pawpal://` string construction inside view code eliminated — all three surfaces now go through the builder.
+- ✅ `pawpal://u/` parse path added to `DeepLinkRouter`; uuid slugs route to the profile handler; handle slugs log a follow-up line.
+- ✅ Haptics: `UIImpactFeedbackGenerator(style: .light)` attached via `.simultaneousGesture` so `ShareLink`'s own gesture recognizer still triggers the share sheet.
+- ⚠️ Build not verified in this sandbox (no `xcodebuild`).
+- 🔲 Manual smoke: tap 分享 on a post → iOS share sheet appears → tap WeChat / 小红书 / AirDrop → URL round-trips as text. Tap the URL on a device with PawPal installed → `ContentView.onOpenURL` routes to the post detail.
+- 🔲 Deferred: universal links + associated domains, handle-only profile round-trip.
+
+---
+
+## 2026-04-18 — Playdates MVP: 约遛弯 flagship pet-to-pet flow (#53)
+
+## Summary
+
+Ships the flagship pet-to-pet feature promoted in the 2026-04-18 direction reset. Pet owners can opt their pet in, browse another pet's profile, and invite it on a 约遛弯 (playdate); the invitee accepts, declines, or lets it age out. Accepted playdates get three device-scheduled reminders (T-24h / T-1h / T+2h); completed playdates prompt a co-authored post. First pet-to-pet schema edge (migration 023) — follow graph stays user-to-user per the new decision-log entry. APNs `playdate_invited` branch added to the `dispatch-notification` edge function; local notifications own the three reminder cadences. Direction doc: `docs/sessions/2026-04-18-pm-direction-playdates.md`. Execution spec: `docs/sessions/2026-04-18-pm-playdates-mvp-execution.md`.
+
+~22 files, +~2100 / -~60 lines (1 new SQL migration, 1 edge-function edit, 3 new Swift services / models, 7 new Swift views, 5 Swift view edits, 6 doc updates).
+
+## Changes
+
+### Backend (Dev 1)
+- **`supabase/023_playdates.sql`** (new, 186 lines) — `alter table pets add column open_to_playdates boolean not null default false`. New `playdates` table (proposer_pet_id / invitee_pet_id referencing `pets` + denormalised proposer_user_id / invitee_user_id for RLS + scheduled_at + location_name + optional location_lat/lng + status enum via CHECK + message + timestamps + `no_self_playdate` CHECK). Three indexes on (invitee_user_id, status), (proposer_user_id, status), (scheduled_at). RLS airtight — SELECT/UPDATE/DELETE gated on participants, INSERT gated on `auth.uid() = proposer_user_id AND proposer pet is caller-owned`. BEFORE INSERT trigger `playdates_gate_invitee_open` (SECURITY DEFINER) rejects when invitee's `open_to_playdates` is false with `hint = '该毛孩子的主人没有开启遛弯邀请'`. AFTER INSERT trigger `playdates_notify_invited` reuses migration 022's `queue_notification` with type `playdate_invited` so the existing `pg_net` hook fires the edge function. Migration ends with `notify pgrst, 'reload schema'` so PostgREST picks up the table without a restart.
+- **`supabase/functions/dispatch-notification/index.ts`** — added the `playdate_invited` branch to `buildPayload`: loads the playdate row + proposer pet + proposer profile via three PostgREST selects, renders title `🐾 新的遛弯邀请` and body `{proposer_user} 带 {proposer_pet} 想约你家 {invitee_pet} {formatRelativeZh(scheduled_at)} 在 {location_name} 遛弯` with `userInfo = { type: 'playdate_invited', target_id: playdate.id }`. New `formatRelativeZh(isoString)` helper produces Chinese relative time formatting (今天 HH:mm / 明天 HH:mm / N小时后 / N天后). Preserves existing ES256 APNs JWT path — no key rotation, no infra change.
+
+### iOS services + models (Dev 1)
+- **`PawPal/Models/RemotePlaydate.swift`** (new) — `struct RemotePlaydate: Codable, Hashable, Identifiable` with `id: UUID`, `proposer_pet_id: UUID`, `invitee_pet_id: UUID`, `proposer_user_id: UUID`, `invitee_user_id: UUID`, `scheduled_at: Date`, `location_name: String`, `location_lat: Double?`, `location_lng: Double?`, `status: Status`, `message: String?`, `created_at: Date`, `updated_at: Date`. Nested `enum Status: String, Codable, Hashable { case proposed, accepted, declined, cancelled, completed }`. Optional embedded `proposer_pet: RemotePet?` / `invitee_pet: RemotePet?` populated via PostgREST embeds.
+- **`PawPal/Services/PlaydateService.swift`** (new) — `@MainActor final class ObservableObject` singleton mirroring `ChatService.shared` / `StoryService.shared` shape. Published `incoming: [RemotePlaydate]`, `outgoing: [RemotePlaydate]`, plus per-id hydration cache. Methods: `loadInbox(for: UUID)` returns invitee_user_id rows with `status in ('proposed', 'accepted')` joined with proposer pet via `.select("*, proposer_pet:pets!proposer_pet_id(*)")`; `loadOutbox(for:)` symmetric with `invitee_pet:pets!invitee_pet_id(*)`; `load(id:)` single-row hydration; `propose(proposerPet:invitee:scheduledAt:locationName:lat:lng:message:)` inserts with optimistic prepend + RLS-error bubbling; `accept(_:)` / `decline(_:)` / `cancel(_:)` / `markCompleted(_:)` updates with optimistic flip + rollback. `NotificationCenter.default.post(name: .playdateDidChange, object: nil)` broadcast after every write so `MainTabView` can reschedule local reminders. `Notification.Name` extension adds `playdateDidChange`.
+- **`PawPal/Services/DeepLinkRouter.swift`** — added `case playdate(UUID)` to `Route`. `type == "playdate_invited"` routes to `.playdate(targetID)`. `pawpal://playdate/<uuid>` URL host parsed alongside the existing `post` / `profile` / `pet` paths.
+- **`PawPal/Services/LocalNotificationsService.swift`** — added `private let playdatePrefix = "pawpal.playdate."`. New `schedulePlaydateReminders(for playdate: RemotePlaydate, otherPetNameByID: [UUID: String])` schedules three `UNCalendarNotificationTrigger(dateMatching:, repeats: false)` requests with identifiers `pawpal.playdate.t24h.<id>`, `pawpal.playdate.t1h.<id>`, `pawpal.playdate.t2h.<id>`, one-shot per playdate. Bodies: T-24h `明天和 {other_pet} 在 {location} 有遛弯 📍`, T-1h `1小时后和 {other_pet} 在 {location} 见 🐾`, T+2h `遛完弯啦！要不要发个帖？` (triggers the post-playdate prompt). `cancelReminders(for playdateID: UUID)` filters pending requests on the playdate prefix + id suffix. Extended `cancelAll()` to also strip playdate-prefixed requests so signOut fully cleans up. Called from `MainTabView`'s `.onReceive(.playdateDidChange)` observer; caller resolves `otherPetNameByID` from cached pets.
+- **`PawPal/Models/RemotePet.swift`** — added `open_to_playdates: Bool?` (optional so decode-tolerant against DB rows created pre-023). Codable round-trip.
+- **`PawPal/Services/PetsService.swift`** — `struct PetUpdate` gains `openToPlaydates: Bool?`. `updatePet` signature grows the parameter; PostgREST PATCH body conditionally includes `open_to_playdates` when set. Defensive fallback `resolvedOpenToPlaydates` means both the add-flow and the edit-flow write the column even when callers pre-date the signature extension.
+
+### iOS views + entry points (Dev 2)
+- **`PawPal/Views/Components/LocationCompleter.swift`** (new) — `@MainActor final class LocationCompleter: NSObject, ObservableObject, MKLocalSearchCompleterDelegate` wrapping `MKLocalSearchCompleter` with a `@Published var suggestions: [MKLocalSearchCompletion]`. Caller calls `update(queryFragment:)`; tap on a suggestion kicks `MKLocalSearch.start` to resolve to a `CLLocationCoordinate2D`. Extracted to a standalone file so future surfaces (onboarding city pickers, playdate filters) can reuse it — previously lived inline in ProfileView.
+- **`PawPal/Views/PlaydateSafetyInterstitialView.swift`** (new) — one-time safety interstitial sheet. Chinese copy: "第一次见面记得选择宠物友好的公共场所，提前交流双方毛孩子的社交经验与特殊情况。如遇异常请及时离开。" Persistent via `UserDefaults "pawpal.playdate.safety.seen" == true` so repeat users skip it.
+- **`PawPal/Views/PlaydateComposerSheet.swift`** (new) — composer for a new invite. Fields: proposer-pet picker (only the viewer's own pets, defaults to the first), location text field with `LocationCompleter`-driven suggestion list, `DatePicker` for `scheduled_at` with a 1h floor from now, optional message textarea. Submit calls `PlaydateService.propose`; surfaces the `hint` from the BEFORE INSERT trigger as a user-facing alert on failure.
+- **`PawPal/Views/PlaydateDetailView.swift`** (new) — status-aware detail view. Renders proposer + invitee pet cards (taps → `PetProfileView`), scheduled_at block with `formatRelativeZh`-style Chinese relative time, location block (with map placeholder for future lat/lng rendering), message block. Bottom action bar branches on status + viewer role: proposed → invitee sees 接受 / 婉拒; proposed → proposer sees 取消邀请; accepted → either side sees 取消 / 标记已完成 (within post-event window).
+- **`PawPal/Views/Components/PlaydateCountdownCard.swift`** (new) — pinned feed card for accepted playdates where `scheduled_at - now < 4h`. Renders countdown string + other-pet avatar + location. Tap → `PlaydateDetailView`.
+- **`PawPal/Views/Components/PlaydateRequestCard.swift`** (new) — pinned feed card for proposed invites where `now - created_at < 48h` and the viewer is the invitee. Renders proposer-pet avatar + name + 想约你家 {invitee_pet_name} + time + inline 接受 / 婉拒 buttons. Tap (not button) → `PlaydateDetailView`.
+- **`PawPal/Views/PostPlaydatePromptSheet.swift`** (new) — fires post-completion (T+2h local reminder tap or manual 标记已完成). Two choices: "写一篇" opens `CreatePostView` with `ComposerPrefill(pets: [proposer_pet, invitee_pet], caption: "刚和 {other_pet_name} 遛完弯～")` prefilled; "以后再说" dismisses.
+- **`PawPal/Views/PetProfileView.swift`** — added `canProposePlaydate` computed (viewer owns a pet + target pet `open_to_playdates == true` + viewer ≠ owner). When true, renders a 约遛弯 pill in the hero row. First-tap → `PlaydateSafetyInterstitialView` via `UserDefaults` gate, otherwise → `PlaydateComposerSheet`.
+- **`PawPal/Views/ProfileView.swift`** — removed the inline `LocationCompleter` (extracted to Components). `ProfilePetEditorSheet` gained a 开启遛弯邀请 `Toggle` in a new 遛弯 section. The `onSave` closure grew to 11 args (added `openToPlaydates: Bool`); call sites at the add + edit paths updated.
+- **`PawPal/Views/FeedView.swift`** — observes `PlaydateService.shared`. Three `@State` row collections: incoming proposals, accepted countdown rows, completable rows. `ComposerPrefill` extended with `pets: [UUID]?`. Pinned card stack renders above the normal feed (`PlaydateRequestCard` → `PlaydateCountdownCard`), `.navigationDestination(item: $navigatingPlaydate)` handles in-app taps (DeepLink reserved for push / cold-start). `recomputePlaydateCards()` handles the 48h / 4h windowing on load + `.playdateDidChange`.
+- **`PawPal/Views/MainTabView.swift`** — added `.playdateID(UUID)` to `DeepLinkTarget`; `.playdate(id)` branch in `handleDeepLink(_:)` routes through a new `DeepLinkPlaydateLoader` (resolves id → `PlaydateDetailView`). `.onReceive(.playdateDidChange)` observer calls `PlaydateService.shared.loadInbox + loadOutbox` then `LocalNotificationsService.shared.schedulePlaydateReminders(for:otherPetNameByID:)` for every `accepted` row, passing a `[UUID: String]` lookup built from the cached pets.
+- **`PawPal/Views/DiscoverView.swift`** — single-line `// TODO(playdates-mvp+1): add "约遛弯的毛孩子" rail here` comment for the deferred Discover rail.
+
+### Docs
+- **`docs/sessions/2026-04-18-pm-playdates-mvp-execution.md`** (new) — file-level execution spec used by Dev 1 + Dev 2. Covers migration SQL, edge function branch, iOS service signatures, DeepLinkRouter changes, LocalNotificationsService extension, the 7 new views + 5 edited views, Chinese copy verbatim, risks.
+- **`docs/decisions.md`** — new entry: **Playdates are the first pet-to-pet primitive; follow graph stays user-to-user** covering the denormalised user_id columns rationale, the follow-graph separation, the opt-in default-off stance, and the playdate/follow primitives separation.
+- **`docs/scope.md`** — moved playdate scheduling from "Currently In Scope — next up" to shipped. Added "Playdates follow-ups" block listing the deferred seams (Discover rail, server-side completed sweeper, Realtime cross-device cancel, repeat / weekly, group playdates). Updated the v1.5 entry to note `playdate_invited` has landed and the T-minus reminders will stay on the local path.
+- **`docs/database.md`** — added `pets.open_to_playdates` column section and the full `playdates` table section (schema, RLS, triggers, status transitions). Appended three new indexes to the Indexes block.
+- **`docs/known-issues.md`** — added two new entries: Playdates MVP known limitations + deferred follow-ups (APNs-gated invite delivery, cross-device cancel gap, no server sweeper, text-with-optional-coords location, no Discover rail, no repeat / group, one-time safety interstitial, Feb 29 / DST edge), and Build verification pending with spot-check list. Also added the sender-locale note on the `playdate_invited` copy.
+- **`ROADMAP.md`** — Phase 6: playdates MVP 🔲 → ✅ with a long-form line enumerating all Dev 1 + Dev 2 deliverables. State-of-the-project paragraph updated to name playdates as shipped today.
+
+### Chinese copy
+- **Pill**: `约遛弯`
+- **Safety interstitial**: title `第一次见面请注意` / body `第一次见面记得选择宠物友好的公共场所，提前交流双方毛孩子的社交经验与特殊情况。如遇异常请及时离开。` / CTA `我明白了`
+- **Composer**: title `发起遛弯邀请` / labels `选择你的毛孩子` / `地点` / `时间` / `想说的话（可选）` / CTA `发送邀请`
+- **APNs push title** `🐾 新的遛弯邀请` / **body** `{proposer_user} 带 {proposer_pet} 想约你家 {invitee_pet} {relative_time} 在 {location_name} 遛弯`
+- **Local reminders**: T-24h `明天和 {other_pet} 在 {location} 有遛弯 📍`; T-1h `1小时后和 {other_pet} 在 {location} 见 🐾`; T+2h `遛完弯啦！要不要发个帖？`
+- **Post-playdate prompt**: title `记录这次遛弯吗？` / CTAs `写一篇` / `以后再说` / default caption `刚和 {other_pet_name} 遛完弯～`
+- **Status**: `提议中` / `已接受` / `已婉拒` / `已取消` / `已完成`
+
+## Files Changed
+
+| File | Category | Change |
+| --- | --- | --- |
+| `supabase/023_playdates.sql` | Backend | New migration: `pets.open_to_playdates` + `playdates` + RLS + 2 triggers |
+| `supabase/functions/dispatch-notification/index.ts` | Backend | `playdate_invited` branch + `formatRelativeZh` helper |
+| `PawPal/Models/RemotePlaydate.swift` | Models | New: model + `Status` enum |
+| `PawPal/Models/RemotePet.swift` | Models | `open_to_playdates: Bool?` added |
+| `PawPal/Services/PlaydateService.swift` | Services | New: load/propose/accept/decline/cancel/markCompleted + broadcast |
+| `PawPal/Services/PetsService.swift` | Services | `PetUpdate.openToPlaydates` + `updatePet` signature |
+| `PawPal/Services/LocalNotificationsService.swift` | Services | `schedulePlaydateReminders` + playdate prefix + `cancelAll` extension |
+| `PawPal/Services/DeepLinkRouter.swift` | Services | `.playdate(UUID)` + `playdate_invited` type + `pawpal://playdate/` |
+| `PawPal/Views/Components/LocationCompleter.swift` | Views | New: extracted `MKLocalSearchCompleter` wrapper |
+| `PawPal/Views/Components/PlaydateCountdownCard.swift` | Views | New: pinned feed card ≤4h |
+| `PawPal/Views/Components/PlaydateRequestCard.swift` | Views | New: pinned feed card ≤48h pending invites |
+| `PawPal/Views/PlaydateSafetyInterstitialView.swift` | Views | New: one-time safety copy sheet |
+| `PawPal/Views/PlaydateComposerSheet.swift` | Views | New: compose invite |
+| `PawPal/Views/PlaydateDetailView.swift` | Views | New: status-aware detail + action bar |
+| `PawPal/Views/PostPlaydatePromptSheet.swift` | Views | New: post-completion prompt |
+| `PawPal/Views/PetProfileView.swift` | Views | `约遛弯` pill + visibility gate + sheets |
+| `PawPal/Views/ProfileView.swift` | Views | `开启遛弯邀请` toggle + extracted `LocationCompleter` import |
+| `PawPal/Views/FeedView.swift` | Views | Pinned card stack + `ComposerPrefill.pets` + recompute pipeline |
+| `PawPal/Views/MainTabView.swift` | Views | `.playdate` deep-link + `.playdateDidChange` observer |
+| `PawPal/Views/DiscoverView.swift` | Views | `TODO(playdates-mvp+1)` seam |
+| `docs/sessions/2026-04-18-pm-playdates-mvp-execution.md` | Docs | New: PM execution spec |
+| `docs/decisions.md` | Docs | New entry: playdates pet-to-pet primitive |
+| `docs/scope.md` | Docs | Playdates shipped; follow-ups listed |
+| `docs/database.md` | Docs | `pets.open_to_playdates` + `playdates` + indexes |
+| `docs/known-issues.md` | Docs | Known limitations + build verification pending + locale note |
+| `ROADMAP.md` | Docs | Phase 6: playdates ✅ |
+
+## Validations
+
+- ✅ Grep verification: `PlaydateService` is referenced from `FeedView`, `MainTabView`, `PlaydateRequestCard`, `PlaydateDetailView`, `PlaydateComposerSheet`, plus the service file itself. `schedulePlaydateReminders` is called from `MainTabView` and defined in `LocalNotificationsService`. `.playdateDidChange` is posted in `PlaydateService` + observed in `MainTabView` + `FeedView`. `.playdate(` case is present in `DeepLinkRouter` + `MainTabView` + `LocalNotificationsService`. `open_to_playdates` lives in `RemotePet`, `PetsService`, `ProfileView`, `PetProfileView`, `DiscoverView` (TODO), and `PlaydateService` (gate explanation). `playdate_invited` is present in `supabase/functions/dispatch-notification/index.ts`, `supabase/023_playdates.sql`, and `supabase/022_push_notifications.sql` (type CHECK).
+- ✅ RLS airtight: SELECT / UPDATE / DELETE all gated on `auth.uid() = proposer_user_id or auth.uid() = invitee_user_id`; INSERT also requires the caller to own the proposer pet. BEFORE INSERT trigger + CHECK `no_self_playdate` + CHECK `status in (...)`.
+- ✅ APNs path: edge function's `playdate_invited` branch reuses the existing ES256 JWT + bundle id plumbing — no new secrets, no key rotation.
+- ✅ Local reminders lifecycle: `schedulePlaydateReminders` cancels previous reminders for the same playdate id before scheduling the three new ones; `cancelReminders(for:)` is called from accept/decline/cancel/markCompleted paths; `cancelAll()` strips both the milestone prefix and the playdate prefix so signOut cleans up completely.
+- ✅ Visibility gate: `PetProfileView.canProposePlaydate` checks viewer-owns-a-pet + target-pet-open + not-self; the 约遛弯 pill is hidden otherwise. BEFORE INSERT trigger is defense-in-depth for stale UI state.
+- ⚠️ Build not verified in this sandbox (no `xcodebuild`). Spot-check list captured in `docs/known-issues.md`.
+- 🔲 Manual smoke: propose → accept → wait for local reminder → accept post prompt → CreatePostView opens with prefill.
+- 🔲 Manual smoke: propose → invitee flips `open_to_playdates` to false → verify INSERT is rejected with the hint string.
+
+---
+
+## 2026-04-18 — Local notifications stopgap for milestone day-of birthdays (#52)
+
+## Summary
+
+Ships the APNs-free stopgap for milestone day-of reminders while push v1 waits on Apple Developer Program enrollment. Every owned pet with a `pets.birthday` gets a `UNCalendarNotificationTrigger` scheduled at 09:00 local time on the matching month-day, repeating yearly. Pure iOS SDK — no APNs key, no Supabase roundtrip, no `.p8`, no Postgres settings. Coexists cleanly with the APNs pipeline; the two share `DeepLinkRouter` on tap. Makes the local path the long-term owner of device-schedulable events — APNs v1.5 will ship server-originating events (playdate T-minus, chat DMs, memory loop) but **not** `birthday_today`. Direction doc: `docs/sessions/2026-04-18-pm-local-notifications-stopgap.md`; decision rationale: `docs/decisions.md` → "Local notifications own device-schedulable events; APNs owns server events".
+
+7 files, +~250 / -~5 lines (1 new Swift file, 1 new PM doc, 1 Swift edit to DeepLinkRouter, 1 Swift edit to AuthManager, 1 Swift edit to MainTabView, 4 doc updates).
+
+## Changes
+
+### iOS
+- **`PawPal/Services/LocalNotificationsService.swift`** (146 lines, new) — `@MainActor final class ObservableObject` singleton. Methods: `scheduleBirthdayReminders(for:)` cancels all existing `pawpal.milestone.birthday.*` requests then schedules one `UNCalendarNotificationTrigger(dateMatching: DateComponents(hour:9, minute:0, month:, day:), repeats: true)` per pet-with-birthday; `cancelBirthday(for:)` single-id removal; `cancelAll()` filtered on the `milestonePrefix` so we don't nuke non-milestone pending requests. Early-exits silently when authorization is not `.authorized` or `.provisional` — priming owns the prompt. `userInfo = ["type": "birthday_today", "target_id": pet.id.uuidString]` mirrors the APNs payload shape so `AppDelegate.userNotificationCenter(_:didReceive:)` routes both origins through the same `DeepLinkRouter.route(type:targetID:)` path.
+- **`PawPal/Services/DeepLinkRouter.swift`** — added `case pet(UUID)` to the `Route` enum (distinct from `.profile(UUID)` which is a user id); `birthday_today` and `memory_today` type strings route to `.pet(targetID)`; `pawpal://pet/<uuid>` URL host parsed.
+- **`PawPal/Services/AuthManager.swift`** — `signOut` now captures `signOutUserID` outside the Task and calls `await LocalNotificationsService.shared.cancelAll()` before `authService.signOut()`, so a signed-out device doesn't keep firing reminders for the previous user's pets.
+- **`PawPal/Views/MainTabView.swift`** — added `DeepLinkPetLoader` private view that resolves a pet id → `PetProfileView` (Me tab when owned, Discover otherwise); `.pet(UUID)` case in `handleDeepLink(_:)`. Scheduler wiring: `.task` on `tabContent` mount seeds from `petsService.pets` (covers the onboarding → tabContent path where `.onChange` wouldn't fire); `.onChange(of: petsService.pets)` triggers `rescheduleBirthdaysIfChanged(pets:force:)` which diffs on `Set<BirthdayKey(id, birthday)>` to prevent `.petDidUpdate`-driven thrash (avatar/accessory edits from PR #50 don't touch birthdays, so the scheduler no-ops). `scenePhase → active` calls the same function with `force: true` to catch permission flips in Settings.
+
+### Docs
+- **`docs/sessions/2026-04-18-pm-local-notifications-stopgap.md`** (new) — PM direction doc for the stopgap. Covers MVP scope (birthday day-of only; social / memory-loop / playdates explicitly OUT), scheduling lifecycle, DeepLinkRouter changes, Chinese copy, coexistence with APNs when it lands, and risks (Feb 29 skip, 64-pending cap, time-zone travel, permission revoke, reschedule loop).
+- **`docs/decisions.md`** — new entry: **Local notifications own device-schedulable events; APNs owns server events** codifying the permanent division of responsibility. Even after APNs v1.5 ships, `birthday_today` stays local.
+- **`docs/scope.md`** — local notifications stopgap moved into "Currently In Scope"; the v1.5 "Deferred" entry updated to clarify that milestone day-of birthdays are NO LONGER planned for the APNs path.
+- **`ROADMAP.md`** — Phase 6 note: local-notifications stopgap shipped ✅ alongside push v1; push note clarified that APNs delivery is gated on user-owned Apple Developer enrollment.
+- **`docs/known-issues.md`** — two new entries: known limitations (Feb 29 skip, 64-pending cap, time-zone travel, cross-device, permission revoke, age drift — all deliberate not bugs), and build verification pending with spot-check list.
+
+### Chinese copy
+- **Title:** `🎂 {pet_name} 今天生日！`
+- **Body:** `今天是 {pet_name} 的 {N} 岁生日，点这里发个祝福帖吧 ❤️`
+
+## Files Changed
+
+| File | Category | Change |
+| --- | --- | --- |
+| `PawPal/Services/LocalNotificationsService.swift` | Services | New: `@MainActor` singleton; schedule/cancel birthday reminders |
+| `PawPal/Services/DeepLinkRouter.swift` | Services | `.pet(UUID)` case + `birthday_today` / `memory_today` + `pawpal://pet/` |
+| `PawPal/Services/AuthManager.swift` | Services | `cancelAll()` on signOut |
+| `PawPal/Views/MainTabView.swift` | Views | `DeepLinkPetLoader` + `.pet` branch + `BirthdayKey` diff + scenePhase |
+| `docs/sessions/2026-04-18-pm-local-notifications-stopgap.md` | Docs | New: PM direction |
+| `docs/decisions.md` | Docs | New entry: local owns device-schedulable events |
+| `docs/scope.md` | Docs | Local notifs → in scope; v1.5 no longer owns birthday_today |
+| `ROADMAP.md` | Docs | Phase 6: local-notifs stopgap ✅ |
+| `docs/known-issues.md` | Docs | Known limits + build verification pending |
+
+## Validations
+
+- ✅ Grep verification: `LocalNotificationsService` referenced from `AuthManager` (signOut → cancelAll), `MainTabView` (reschedule + mount seed), and the service file itself. `DeepLinkRouter.Route.pet(UUID)` in router + referenced from `MainTabView.handleDeepLink`. `birthday_today` routes correctly.
+- ✅ Reschedule-loop guard verified: `BirthdayKey(id:, birthday:)` Set diff prevents avatar/accessory edit broadcasts (`.petDidUpdate` from PR #50) from re-entering the scheduler. Only birthday-relevant mutations trigger a reschedule.
+- ✅ Permission-gate verified: service early-exits with `[LocalNotif] 未授权,跳过生日提醒调度` when `authorizationStatus != .authorized && != .provisional`. Priming sheet continues to own the prompt UX; the service never prompts.
+- ✅ Identifier-prefix isolation: `cancelAll()` and the pre-schedule cancel both filter on `pawpal.milestone.birthday.` so unrelated future categories don't get nuked.
+- ⚠️ Build not verified in this sandbox (no `xcodebuild`). On-device spot checks listed in `docs/known-issues.md`.
+- 🔲 Manual: set a pet birthday → verify reminder lands at 09:00 local on that month-day (or use Xcode's "Simulate Notification" with the produced `.apns` payload to smoke-test the DeepLinkRouter tap path).
+
+---
+
+## 2026-04-18 — Push notifications v1: APNs pipeline end-to-end (#51)
+
+## Summary
+
+Ships the end-to-end push notifications pipeline for three social signals — `like_post`, `comment_post`, `follow_user`. APNs-direct (no FCM — mainland China delivery reliability). `device_tokens` + `notifications` tables with RLS, AFTER INSERT triggers that call `pg_net.http_post` at a Deno edge function, ES256 JWT signed in Web Crypto. iOS gets a new `PushService` + `AppDelegate` + `DeepLinkRouter`, a Chinese-first priming sheet that fires after the user saves their first pet, and token lifecycle hooked into `AuthManager.signIn/register/restoreSession/signOut`. v1.5 (milestone day-of, playdate reminders, chat DM pushes) reuses the same pipeline — `notifications.type` CHECK already lists all 10 types.
+
+Unblocks playdates MVP (needs T-24h / T-1h / T+2h reminders) and milestone day-of prompts (already shipped data-side on 2026-04-18). Direction doc: `docs/sessions/2026-04-18-pm-push-notifications.md`.
+
+10 files, +~1450 / -~10 lines (3 new SQL/TS/MD backend files, 3 new Swift files, 5 Swift/plist edits, 4 doc updates).
+
+## Changes
+
+### Backend
+- **`supabase/022_push_notifications.sql`** (354 lines, new) — `device_tokens` (composite PK `user_id, token`, `env` CHECK), `notifications` (10-type CHECK covering v1 + v1.5), RLS (device_tokens owner CRUD, notifications recipient SELECT only), `queue_notification()` SECURITY DEFINER helper with self-notify short-circuit, three AFTER INSERT triggers on `likes`/`comments`/`follows`. Idempotent (`if not exists` / `create or replace` / `drop ... if exists`). Ends with `notify pgrst, 'reload schema'`.
+- **`supabase/functions/dispatch-notification/index.ts`** (527 lines, new) — Deno edge function. Reads notification by id, joins actor profile + recipient pet, builds Chinese APS payload per type, signs ES256 APNs JWT (Web Crypto only — no `jose` import), POSTs to `api.push.apple.com` or `api.sandbox.push.apple.com` per-token `env`, handles 410 Unregistered → DELETE token row, 429/5xx → single 1s retry, stamps `sent_at` / `error` on completion. JWT + CryptoKey cached at module scope with 50-minute TTL.
+- **`supabase/functions/dispatch-notification/README.md`** (63 lines, new) — secrets table, Postgres settings, deploy command, local test snippet.
+
+### iOS
+- **`PawPal/AppDelegate.swift`** (111 lines, new) — `UIApplicationDelegate` + `UNUserNotificationCenterDelegate`. Forwards APNs token callback → `PushService.handleAPNsToken`, foreground presentation returns `[.banner, .sound, .badge]`, tap response parses `type` + `target_id` → `DeepLinkRouter.route(type:targetID:)`.
+- **`PawPal/Services/PushService.swift`** (213 lines, new) — `@MainActor` singleton. `requestAuthorization`, `refreshAuthorizationStatus`, `handleAPNsToken` (caches hex to `UserDefaults` under `pawpal.apns.lastToken`; no pre-auth upsert — RLS requires `auth.uid() = user_id`), `registerCurrentToken(for:)` (upsert on `user_id,token` composite key), `clearToken(for:)` (DELETE + clear cache; does NOT call `unregisterForRemoteNotifications` so OS grant survives), `handleRegistrationError`. Env detection `#if DEBUG` → sandbox else production with `TODO(push)` to read the provisioning-profile entitlement at runtime for TestFlight correctness.
+- **`PawPal/Services/DeepLinkRouter.swift`** (117 lines, new) — `Route` enum (`.post(UUID)` / `.profile(UUID)` / `.chat(UUID)`), `@Published pendingRoute`, `route(type:targetID:)` maps notification type string → Route, `route(url:)` parses `pawpal://post/<uuid>` / `profile/<uuid>` / `chat/<uuid>`, `consume()` clears the pending route after navigation.
+- **`PawPal/PawPalApp.swift`** — added `@UIApplicationDelegateAdaptor(AppDelegate.self)`. URLCache init untouched.
+- **`PawPal/Services/AuthManager.swift`** — `registerCurrentToken(for:)` hooked into `signIn` / `register` / `restoreSession` success paths. `signOut` captures userID before tearing down the session and calls `clearToken(for:)` BEFORE `authService.signOut()` — the DELETE requires an active `auth.uid()` to pass RLS.
+- **`PawPal/Views/OnboardingView.swift`** — new `NotificationPrimingView` full-screen cover shown after first pet save. 🔔 hero, Chinese copy verbatim from PM doc (标题: 让 PawPal 第一时间告诉你 / body: 开启通知，你的毛孩子有了新朋友...). Primary `开启通知` triggers system prompt; secondary `以后再说` dismisses. Gated by `UserDefaults` flag `pawpal.push.primed` so re-prompts don't fire on subsequent sign-ins.
+- **`PawPal/Views/MainTabView.swift`** — per-tab `NavigationPath` bindings, `@ObservedObject deepLinkRouter`, `.onChange(of: deepLinkRouter.pendingRoute)` switches tab and pushes the appropriate detail view (`PostDetailView` / `PetProfileView` / `ChatDetailView`) via three private loader views that fetch the row by id. `scenePhase` observer calls `PushService.refreshAuthorizationStatus` on foreground to catch revocations in iOS Settings.
+- **`PawPal/ContentView.swift`** — `.onOpenURL { DeepLinkRouter.shared.route(url: $0) }` so external `pawpal://` links route into the tab bar.
+- **`PawPal/Info.plist`** — registered `pawpal://` URL scheme via `CFBundleURLTypes`.
+
+### Docs
+- **`docs/sessions/2026-04-18-pm-push-notifications.md`** (new) — PM direction doc.
+- **`docs/decisions.md`** — new entry: **Direct APNs, no FCM — Chinese iOS reliability** covering the pg_net-over-webhook choice, the notifications-table-as-audit rationale, and the per-token env approach.
+- **`docs/scope.md`** — push v1 moved into "Currently In Scope" with the direction-doc reference; "Deferred" now lists v1.5 types + polish (quiet hours, in-app center, rich push, VoIP).
+- **`ROADMAP.md`** — Phase 6: push notifications flipped 🔲 → ✅ (v1); playdates 🔲 now marked as unblocked by push.
+- **`docs/known-issues.md`** — added three entries: user-action prerequisites (Apple Developer portal + Xcode capabilities + Supabase secrets + Postgres settings), v1 known tradeoffs (no quiet hours, static badge, passive 410 cleanup, TestFlight env detection, v1.5 unsupported types), build verification pending with spot-check list.
+
+### Why NotificationCenter isn't used here
+Push dispatch is server → APNs → device — no in-app cross-service sync needed. `DeepLinkRouter.shared` is observed directly by MainTabView via `@ObservedObject`, matching the existing `PetsService.shared` / `StoryService.shared` pattern.
+
+## Files Changed
+
+| File | Category | Change |
+| --- | --- | --- |
+| `supabase/022_push_notifications.sql` | Backend | New migration: device_tokens, notifications, RLS, 3 triggers |
+| `supabase/functions/dispatch-notification/index.ts` | Backend | New edge function: APNs dispatch, ES256 signing, 410 cleanup |
+| `supabase/functions/dispatch-notification/README.md` | Backend | Deploy + secrets docs |
+| `PawPal/AppDelegate.swift` | Services | New: APNs + UNUserNotificationCenterDelegate |
+| `PawPal/Services/PushService.swift` | Services | New: token lifecycle + upsert/delete on device_tokens |
+| `PawPal/Services/DeepLinkRouter.swift` | Services | New: Route enum + pendingRoute + parsers |
+| `PawPal/Services/AuthManager.swift` | Services | Hook register/clear into signIn/register/restoreSession/signOut |
+| `PawPal/PawPalApp.swift` | App | @UIApplicationDelegateAdaptor |
+| `PawPal/Views/OnboardingView.swift` | Views | NotificationPrimingView after first pet save |
+| `PawPal/Views/MainTabView.swift` | Views | Deep-link routing + scenePhase observer |
+| `PawPal/ContentView.swift` | App | .onOpenURL → DeepLinkRouter |
+| `PawPal/Info.plist` | App | Register pawpal:// URL scheme |
+| `docs/sessions/2026-04-18-pm-push-notifications.md` | Docs | New: PM direction doc |
+| `docs/decisions.md` | Docs | New: Direct APNs, no FCM |
+| `docs/scope.md` | Docs | Push v1 → in scope; v1.5 + polish → deferred |
+| `ROADMAP.md` | Docs | Push ✅ v1; playdates unblocked |
+| `docs/known-issues.md` | Docs | Prerequisites + tradeoffs + build verification pending |
+
+## Validations
+
+- ✅ Grep verification: `PushService`, `DeepLinkRouter`, `device_tokens`, `UIApplicationDelegateAdaptor`, `didRegisterForRemoteNotificationsWithDeviceToken`, `onOpenURL`, `queue_notification`, `pawpal://`, `CFBundleURLTypes` all present across the expected files.
+- ✅ SQL idempotent: re-apply `022_push_notifications.sql` via `supabase/supabase` SQL editor is safe (all guards in place).
+- ✅ Client fails gracefully if backend not deployed yet: upsert / delete failures are caught + logged, never crash. In-app functionality unaffected.
+- ⚠️ Build not verified in this sandbox (no `xcodebuild`). Spot checks on device required — full list in `docs/known-issues.md`.
+- ⚠️ APNs delivery not verified end-to-end — requires Apple Developer key + Xcode capability + Supabase secrets + Postgres settings (all four documented in `docs/known-issues.md`).
+- 🔲 Manual: on-device spot checks for each of the three v1 notification types (like / comment / follow) including deep-link routing on tap.
+
+---
+
+## 2026-04-18 — Propagate pet mutations into cached feed + story rows (#50)
+
+## Summary
+
+Fixes the "pet photo not showing on older posts" bug reported with a side-by-side screenshot of two posts from the same pet (Kaka): the newer post rendered the real pet avatar while an older text-only post still showed the illustrated `DogAvatar` fallback. Root cause: when the owner uploads a new pet avatar or changes the virtual-pet accessory, `PetsService.pets` updates but `PostsService.feedPosts` / `userPosts` / `petPosts` and `StoryService.activeStoriesByPet` each carry per-row JOIN snapshots captured at query time (`RemotePost.pets`, `RemoteStory.pet`). Those snapshots stay stale until the user pull-to-refreshes. Now every `PetsService` write broadcasts a `NotificationCenter` event and every cache subscribes on init, patching matching rows in place.
+
+4 files, +~120 / -~5 lines.
+
+## Changes
+
+### Cross-service sync
+- **`PawPal/Services/PetsService.swift`** — declared `Notification.Name.petDidUpdate` at file scope. `updatePet`, `updatePetAvatar`, and `updatePetAccessory` all `NotificationCenter.default.post(.petDidUpdate, userInfo: ["pet": patched])` after their optimistic / DB write completes. Accessory broadcast fires *before* the DB round-trip to match that method's existing "optimistic wins" policy (local cache is the source of truth; the server is asked to catch up).
+- **`PawPal/Services/PostsService.swift`** — added `patchPet(_:)` that rebuilds any cached `RemotePost` whose `pet_id` matches, since `RemotePost.pets` is a `let`. Subscribes to `.petDidUpdate` in `init`, releases in `deinit`. The subscriber hops onto the MainActor (notifications can arrive on any thread) before calling `patchPet`. Idempotent — already-matching snapshots skip the rebuild so `@Published` doesn't churn.
+- **`PawPal/Services/StoryService.swift`** — added `patchPet(_:)` that mutates `activeStoriesByPet[pet.id]` in place (since `RemoteStory.pet` is a `var`, no rebuild needed). Same subscriber pattern as `PostsService`. Only the matching pet's bucket is rewritten, so unrelated rails don't re-render.
+
+### Why NotificationCenter (not a direct call)
+`PostsService` is `@StateObject` in four views (`FeedView`, `ProfileView`, `PetProfileView`, `CreatePostView`) — each view owns its own instance. A direct `PostsService.patchPet(...)` call from `PetsService` would only patch one of them. Broadcasting via `NotificationCenter` means every live instance self-subscribes and gets the update on the same RunLoop tick. `StoryService.shared` also subscribes, so the stories rail reflects the new avatar / accessory too.
+
+## Files Changed
+
+| File | Category | Change |
+| --- | --- | --- |
+| `PawPal/Services/PetsService.swift` | Services | Declare `.petDidUpdate`; broadcast on `updatePet` / `updatePetAvatar` / `updatePetAccessory` |
+| `PawPal/Services/PostsService.swift` | Services | `patchPet(_:)`; subscribe / unsubscribe in init / deinit |
+| `PawPal/Services/StoryService.swift` | Services | `patchPet(_:)`; subscribe / unsubscribe in init / deinit |
+
+## Validations
+
+- ⚠️ Build not verified in this sandbox (no `xcodebuild` available). Static checks pass: `RemotePet` already conforms to `Equatable` (needed for the skip-if-unchanged guard), `RemotePost.init(...)` signature matches the one `patchPet` calls, `RemoteStory.pet` is `var` so in-place mutation is valid.
+- 🔲 Manual device check: edit pet avatar on `PetProfileView`, pop back to `FeedView` without pull-to-refresh — older posts from that pet should now render the new avatar. Same for accessory changes on `ProfileView` → story rail ring.
+
+---
+
+## 2026-04-18 — Story composer camera-first + owner-only pet dress-up (#49)
+
+## Summary
+
+Fixes three regressions reported after the stories MVP shipped: (1) the story composer had a visibly clipped title and an X button overlapping the photo card, (2) the composer defaulted to a photo-library picker instead of capturing live video/photos like Instagram, and (3) any logged-in user could tap the 🎀/🎩/👓 accessory chips on a pet they didn't own (the backend rejected the write via RLS, but the chip row was still rendered and the tap felt like it did nothing). Stories were already isolated to their own table — verified that nothing leaks into the normal posts feed.
+
+4 files, +~280 / -~280 lines.
+
+## Changes
+
+### Stories Composer
+- **`PawPal/Views/StoryComposerView.swift`** — full rewrite. Dropped the cramped sheet layout (centered title was getting clipped; X sat on the photo card). New layout is fullscreen black à la Instagram: captured media fills the viewport, chrome floats over top/bottom scrims, no centered title at all (so there's nothing to clip). Opens the system camera via a new `CameraPicker` bridge (`UIViewControllerRepresentable` wrapping `UIImagePickerController` with `sourceType = .camera`) by default on devices that have one; simulators auto-open the gallery picker instead so QA isn't locked out. Preview surface has a re-capture shortcut (📷) and a gallery swap (🖼) so the user can change their mind without bailing the whole flow. Cancelling the camera before any photo is picked dismisses the composer entirely (matches Instagram's "cancelled capture = cancelled story"). `PhotosPicker` is still the fallback.
+- **`PawPal/Views/FeedView.swift`** — swapped `.sheet` → `.fullScreenCover` for the composer presentation so the camera UI gets the whole viewport instead of being clipped by a sheet handle.
+- **`PawPal.xcodeproj/project.pbxproj`** — added `INFOPLIST_KEY_NSCameraUsageDescription` and `INFOPLIST_KEY_NSPhotoLibraryUsageDescription` to both Debug and Release build configurations (required for `.camera` sourceType and PhotosPicker under iOS 17+).
+
+### Virtual Pet
+- **`PawPal/Views/VirtualPetView.swift`** — added `canEdit: Bool = true` parameter. When false, the 🎀/🎩/👓 accessory chip row is hidden entirely. The current accessory still renders on the stage (visitors see what the owner picked), but the affordance to change it is gone. Defaults to `true` so preview call sites and the Me-tab `ProfileView` (always owner) keep existing behaviour.
+- **`PawPal/Views/PetProfileView.swift`** — passes its existing `canEdit` computed property through to `VirtualPetView`. Previously the visitor saw the chip row but had no persistence callback; now the chip row itself is hidden so the UX is honest.
+
+### Verified (no change needed)
+- Stories do not appear in the normal feed. `StoryService` reads/writes only the `stories` table; `PostsService` queries only `posts`. No join surfaces stories into the feed — the rail and the grid are independent queries.
+
+## Files Changed
+
+| File | Category | Change |
+| --- | --- | --- |
+| `PawPal/Views/StoryComposerView.swift` | Views | Fullscreen rewrite, camera-first entry, gallery fallback |
+| `PawPal/Views/FeedView.swift` | Views | Composer presentation → fullScreenCover |
+| `PawPal/Views/VirtualPetView.swift` | Views | `canEdit` param; hide accessory chips for visitors |
+| `PawPal/Views/PetProfileView.swift` | Views | Pass `canEdit` through to `VirtualPetView` |
+| `PawPal.xcodeproj/project.pbxproj` | Config | Camera + photo library usage descriptions |
+
+## Validations
+
+- ⚠️ Build not verified in this sandbox (no `xcodebuild` available). Static checks pass: API surfaces targeted are all iOS 18.5-compatible, new parameters have defaults, call sites are consistent, `UIImagePickerController` bridge follows the documented `UIViewControllerRepresentable` pattern.
+- ✅ Stories isolation manually verified: `grep from\(\"stories\"\)` returns only `StoryService.swift`; `PostsService` touches only the `posts` table.
+- 🔲 Camera capture path needs manual verification on a physical device (simulator auto-falls-back to the gallery picker).
+
+---
+
+## 2026-04-18 — Stories MVP, virtual-pet time decay, Discover tab redesign (#48)
+
+## Summary
+
+Round 2 of the MVP push: ships a 24h ephemeral stories surface (per-pet), adds passive time-based decay to the virtual pet stats, replaces the legacy `ContactsView` with a pet-first `DiscoverView` (three rails), and fixes a long-standing feed bug where AsyncImage identity flipped across navigation pops. Migration 018 introduces the `stories` table + RLS; the `story-media` Supabase Storage bucket must be created manually.
+
+13 files, +~2,400 / -~120 lines.
+
+## Changes
+
+### Stories
+- **`supabase/018_stories.sql` (NEW)** — `stories` table keyed by pet, `expires_at` defaults to `now() + 24h`, RLS policies for SELECT (auth'd + unexpired), INSERT (owner + pet ownership), DELETE (owner). Indexes on `(pet_id, expires_at desc)` and `(owner_user_id, expires_at desc)`. Documents the manually-provisioned `story-media` bucket.
+- **`RemoteStory.swift` (NEW)** — Codable model mirroring the DB row. Custom `CodingKeys` + `init(from:)` aliases joined `pets` / `profiles` relations to `pet` / `owner` (matches `RemotePost`'s pattern). `isExpired` computed helper for client-side gating.
+- **`StoryService.swift` (NEW)** — `@MainActor` `.shared` singleton. `loadActiveStories(followedPetIDs:)` joins `pets(*), profiles!owner_user_id(*)` and groups by `pet_id`. `postStory(petID:ownerID:mediaData:mediaType:caption:)` uploads to `story-media` with `{owner_id}/{story_id}.{ext}` path, then inserts; cleans up the blob on insert failure. `deleteStory(storyID:)` + best-effort blob removal. `hasActiveStory(for:)` for fast rail lookups.
+- **`StoryComposerView.swift` (NEW)** — fullscreen sheet, pet chip rail (skips selector for single-pet users), 1:1 image picker, 280-char caption, submit → `StoryService.postStory`. Inline error surfacing; closes on publish via `onPublished`. `TODO(video)` seam.
+- **`StoryViewerView.swift` (NEW)** — Instagram-style black canvas: top progress bars, left/right tap zones, long-press-to-pause, swipe-down-to-dismiss. Owner-only trash button wired to `deleteStory`. Fixed 5s per image story. `PetStoriesBundle` input shape keeps the viewer snapshot-driven.
+
+### Virtual Pet
+- **`VirtualPetStateStore.swift`** — passive time-based decay. Three tunable constants (`hungerDecayPerHour: -3`, `energyRecoveryPerHour: +2`, `moodDecayPerHour: -1`). `decayedState(_:at:)` is a pure static function; `state(for:)` applies it on read; `applyAction` now computes the decayed baseline FIRST and then stacks the tap delta, so "feed after long break" reads as the bar moving up from its low, not from a stale 8-hour-ago value. `updatedAt` intentionally doesn't advance on pure decay — only real persists move it forward.
+
+### Discover
+- **`DiscoverView.swift` (NEW)** — replaces `ContactsView`. Three horizontal rails: 与 [pet] 相似的毛孩子, 人气毛孩子, [city] 的毛孩子. Featured pet resolves via `activePetID` → first pet fallback. Empty state routes the no-pet user to the Me tab via `onAddPetRequested`. Search bar filters locally across name/species/breed/city.
+- **`PetsService.swift`** — three non-throwing discovery methods: `fetchSimilarPets(to:limit:)` (same species + optional breed/city OR filter, excludes the source owner), `fetchPopularPets(excludingOwnerID:limit:)` (ordered by `boop_count desc`), `fetchNearbyPets(city:excludingOwnerID:limit:)`. All three return `[]` on failure so the view doesn't have to unwrap.
+- **`MainTabView.swift`** — swapped the 发现 tab from `ContactsView` to `DiscoverView`. Empty-state closure routes to the Me tab. Onboarding gate from #47 is preserved unchanged.
+
+### Composer
+- **`CreatePostView.swift`** — full redesign, pet-first hero card layout (pet avatar as the subject of the sheet), picker sheet when the user owns multiple pets, mood chips row. Submission flow (`postsService.createPost` with same parameters) is preserved — no regression on image upload.
+
+### Bug Fixes
+- **`FeedView.swift`** — rail is now driven by `StoryService` (`@ObservedObject private var storyService = StoryService.shared`). Own-pet bubble with active story opens viewer; own-pet without story opens composer. Friend pets without active stories fall out of the rail. Added stable `.id()` modifier on the AsyncImage identity keys: `petAvatarLink` (~L956), `singleImage` (~L1133), `ImageCarousel` slides (~L1348), and `PetStoryBubble` avatar (~L661). This fixes the flash-of-placeholder on nav pop into + back out of post details.
+
+### Cleanup
+- **`ContactsView.swift` (DELETED)** — replaced by `DiscoverView`. Only residual reference is a docstring comment in `DiscoverView.swift` explaining the swap.
+
+## Files Changed
+
+| Folder | Files |
+|---|---|
+| `supabase/` | `018_stories.sql` (new) |
+| `PawPal/Models/` | `RemoteStory.swift` (new) |
+| `PawPal/Services/` | `StoryService.swift` (new), `VirtualPetStateStore.swift`, `PetsService.swift` |
+| `PawPal/Views/` | `StoryComposerView.swift` (new), `StoryViewerView.swift` (new), `DiscoverView.swift` (new), `FeedView.swift`, `CreatePostView.swift`, `MainTabView.swift`, `ContactsView.swift` (deleted) |
+| Docs | `CHANGELOG.md`, `ROADMAP.md`, `docs/known-issues.md`, `docs/scope.md`, `docs/decisions.md` |
+
+## Migrations
+
+- `supabase/018_stories.sql` — apply via Supabase SQL editor before the stories rail will render anything.
+- **Manual**: create the `story-media` bucket in the Supabase dashboard (public read, authenticated write) — the SQL file intentionally doesn't create buckets.
+
+## Validations
+
+- ⚠️ **Build pending** — Linux sandbox lacks `xcodebuild`; needs local simulator run per CLAUDE.md.
+- Spot checks after build:
+  - **Stories**: own pet with no story → "+" badge → tap opens composer → publish → rail ring lights up; own pet with live story → tap opens viewer; friend pet with live story appears in rail sorted by newest first; trash icon only visible on own story and deletes it; non-owner cannot see the trash affordance.
+  - **Virtual pet decay**: leave a pet untouched for 1h → hunger drops ~3, mood drops ~1, energy recovers ~2; tap 喂食 → bar snaps up from the *decayed* value (not a stale one); values still persist across relaunch via `pet_state`.
+  - **Discover**: 发现 tab shows three rails with real data; user with no pets sees the "先添加你的毛孩子" card and tap routes to Me; search filters all three rails live.
+  - **Feed image regression fix**: tap into a post detail and back — photos, avatars, and carousel slides render from cache immediately (no placeholder flash).
+  - **Regressions**: Auth sign-in / sign-up, Feed loads with real posts, Create post with images still submits, ProfileView unchanged.
+
+Tested with: `xcodebuild test -project PawPal.xcodeproj -scheme PawPal -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
+
+---
+
+## 2026-04-18 — MVP polish: onboarding, pet-first UI, chat entry points (#47)
+
+## Summary
+
+Closes the P0 gaps from the 2026-04-18 PM MVP audit: strips dead header stubs, forces first-run pet creation, re-orders the Me profile around the pet, pushes pet-avatar badges across every user-list surface, and adds a compose-new sheet inside the 聊天 tab. Joins the post owner profile so caption handles read correctly on non-own posts.
+
+7 files, +~760 / -~180 lines.
+
+## Changes
+
+### Onboarding
+- **`OnboardingView.swift` (NEW)** — full-screen first-run gate. Required pet name, species chips (Dog/Cat), optional breed/city/bio/avatar, gradient `开始使用 PawPal` CTA. No skip affordance — product.md leads with "Pets are the protagonists" so an empty-pet account can't participate. Errors surface inline; the sheet stays mounted until `PetsService.shared.addPet` succeeds.
+- **`MainTabView.swift`** — added `shouldShowOnboarding` gate that renders `OnboardingView` in place of `TabView` when the signed-in user has zero pets. Guards against the cold-start flash with `hasLoadedPetsAtLeastOnce` + `loadedPetsForUserID` so returning users with pets never see the onboarding screen. Re-evaluates on `authManager.currentUser?.id` change so sign-out → sign-in swaps cleanly.
+
+### Pet-first UI
+- **`ProfileView.swift`** — `profileHeader` now leads with `petHeroRow(_:)` (72pt pet avatar + pet name + species/breed/city pills + demoted owner @handle). When the user has no pets yet, `addFirstPetHeroCard` replaces the hero block with a tappable "添加第一只宠物" CTA that opens the same editor sheet. Pets rail, stats capsule, bio, highlights strip, and posts grid are unchanged.
+- **`FollowListView.swift`** — row avatar now carries a featured-pet badge in the bottom-right. `preloadBothIfNeeded` fans out `PetsService.shared.loadFeaturedPets(for: unionIDs)` after the profile lists resolve, keyed by owner id; users with no pets get no badge.
+- **`ChatListView.swift`** — both `threadRow` (inbox) and `ComposeNewChatSheet.row` render the same pet badge overlay on the partner avatar. Fan-out query runs in `.task` + `.refreshable`.
+- **`CreatePostView.swift`** — copy pass: "每条动态都需要关联一只你的宠物 🐾" → "今天你的毛孩子做了什么？🐾" so the pet is the subject of the sentence, not a required field.
+- **`PetsService.swift`** — new `loadFeaturedPets(for userIDs:) async -> [UUID: RemotePet]` runs a single `in("owner_user_id", …)` query and picks the oldest-created pet per owner. Returns `[:]` on failure so callers don't unwrap. Backs the badges on FollowListView, ChatListView.threadRow, and the ComposeNewChatSheet row.
+
+### Chat entry points
+- **`ChatListView.swift`** — `+` button in the sticky header now opens `ComposeNewChatSheet` (new private view) as a `.medium/.large` detent sheet. The sheet lists the viewer's followings via `FollowService.loadFollowingProfiles`, tapping a row dismisses the sheet and routes through `ChatService.shared.startConversation` → `ChatDetailView` using a `navigationDestination(item:)` pattern. Empty state points first-time users at 发现.
+
+### Cleanup
+- **`FeedView.swift`** — removed `headerGlyph` (search / notifications / paperplane stubs that fired a "功能还在完善中" toast on tap), removed the unconditional red notifications badge, removed the local-only bookmark chip + `@State var saved` (no persistence, no 我的收藏 screen), stories rail eyebrow copy "小伙伴动态" → "毛孩子今日份" for pet-first framing. `captionHandle` now prefers `post.owner?.username` over the pet-name fallback so non-own post captions show the real owner handle in bold.
+- **`RemotePost.swift`** — added `let profiles: RemoteProfile?` + `var owner: RemoteProfile?` alias. `CodingKeys`, custom decoder, and memberwise init (default-value `profiles: RemoteProfile? = nil`) all agree. Test helper `makePost` in `PawPalTests` keeps compiling because the new param has a default.
+- **`PostsService.swift`** — added `profiles!owner_user_id(*)` to the top three `selectLevels`; the bare-minimum fallback stays `*, pets(*)` so a missing FK hint doesn't break the feed.
+
+## Files Changed
+
+| Folder | Files |
+|---|---|
+| `PawPal/Models/` | `RemotePost.swift` |
+| `PawPal/Services/` | `PostsService.swift`, `PetsService.swift` |
+| `PawPal/Views/` | `FeedView.swift`, `ChatListView.swift`, `FollowListView.swift`, `ProfileView.swift`, `CreatePostView.swift`, `MainTabView.swift`, `OnboardingView.swift` (new) |
+| Docs | `CHANGELOG.md`, `ROADMAP.md`, `docs/known-issues.md` |
+
+## Validations
+
+- ⚠️ **Build pending** — sandbox lacks `xcodebuild`; needs local run per CLAUDE.md.
+- Spot checks after build:
+  - **Onboarding**: sign up a brand-new account → full-screen `OnboardingView` renders in place of tabs → submit with only `name` set → pet appears in stories rail + Me profile petHeroRow; no skip button anywhere.
+  - **Returning user**: cold-start signed in with pets → never sees onboarding (no flash), lands on Feed.
+  - **Sign-out / sign-in swap**: within same process, signing in as a different user with zero pets reruns the onboarding gate.
+  - **Pet-first ProfileView**: petHeroRow shows 72pt pet avatar + pet name + species pill + owner @handle; empty state shows `addFirstPetHeroCard`; pets rail, stats, highlights, posts grid all still render below.
+  - **Badge rendering**: FollowListView rows, ChatListView threadRow, and the compose-new sheet all show the featured-pet badge; users with no pets show a plain avatar (no empty circle).
+  - **Compose new chat**: tap `+` in 聊天 → sheet lists following → tap row → pushes ChatDetailView for the resolved conversation id (idempotent against existing threads).
+  - **Feed cleanup**: no search / heart / paperplane glyphs in the Feed header; wordmark only; no red notification dot; no bookmark chip on PostCards.
+  - **captionHandle**: a non-own post on the feed shows the real owner handle in bold inline, not the pet name.
+  - **Regression**: Auth sign-in / sign-up, Feed loads with real posts, Create post with images submits and returns to Feed, ProfileView pets rail + highlights + posts grid unchanged in layout.
+
+Tested with: local `xcodebuild` run still required; no automated tests were executed in this sandbox.
+
+---
+
 ## 2026-04-18 — Chat entry points + follow lists + grid badge fix (#46)
 
 ## Summary

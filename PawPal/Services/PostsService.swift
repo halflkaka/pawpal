@@ -18,14 +18,25 @@ final class PostsService: ObservableObject {
     private let client: SupabaseClient
     private let storageBucket = "post-images"
 
+    /// Token for the `petDidUpdate` NotificationCenter subscription —
+    /// held so we can detach in `deinit`. Without this, every instance
+    /// of `PostsService` that's been deallocated would still get woken
+    /// up on every pet edit and the weak-self dance would quietly
+    /// no-op — correct, but wasteful once enough views have churned.
+    private var petUpdateObserver: NSObjectProtocol?
+
     // Fallback chain — tried in order until one succeeds.
     // Splitting likes/comments into separate levels means a missing comments
-    // table won't also wipe the likes data.
+    // table won't also wipe the likes data. The owner profile is joined in
+    // every level except the final bare-minimum fallback so feed cards can
+    // show the real owner handle in the inline-bold caption prefix; the
+    // minimal level still works even if the profiles FK name is mis-hinted
+    // in some edge-case schema state.
     private static let selectLevels: [String] = [
-        "*, pets(*), post_images(id, url, position), likes(user_id), comments(id)", // all tables
-        "*, pets(*), post_images(id, url, position), likes(user_id)",               // likes, no comments
-        "*, pets(*), post_images(id, url, position)",                               // images, no engagement
-        "*, pets(*)"                                                                 // bare minimum
+        "*, pets(*), profiles!owner_user_id(*), post_images(id, url, position), likes(user_id), comments(id)", // all tables
+        "*, pets(*), profiles!owner_user_id(*), post_images(id, url, position), likes(user_id)",               // likes, no comments
+        "*, pets(*), profiles!owner_user_id(*), post_images(id, url, position)",                               // images, no engagement
+        "*, pets(*)"                                                                                            // bare minimum
     ]
     private static let commentOnlySelect = "id, comments(id)"
 
@@ -36,6 +47,28 @@ final class PostsService: ObservableObject {
 
     init() {
         client = SupabaseConfig.client
+
+        // Subscribe to pet mutations so cached post rows pick up new
+        // avatars / accessories without a hard refresh. See the
+        // Notification.Name extension in PetsService.swift for the
+        // cross-service rationale. We bounce onto the MainActor via
+        // Task because MainActor-isolated methods can't be called
+        // directly from the NotificationCenter callback (which may
+        // arrive on an arbitrary thread).
+        petUpdateObserver = NotificationCenter.default.addObserver(
+            forName: .petDidUpdate,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self, let pet = note.userInfo?["pet"] as? RemotePet else { return }
+            Task { @MainActor in self.patchPet(pet) }
+        }
+    }
+
+    deinit {
+        if let petUpdateObserver {
+            NotificationCenter.default.removeObserver(petUpdateObserver)
+        }
     }
 
     // MARK: - Load Feed
@@ -173,6 +206,53 @@ final class PostsService: ObservableObject {
         userPosts = []
     }
 
+    // MARK: - Memory loop (milestones MVP)
+
+    /// Posts authored by the user whose `created_at` month-day matches
+    /// today's local month-day and whose year is strictly earlier. Used
+    /// by the FeedView memory card.
+    ///
+    /// Implementation: fetch the user's most recent posts (capped at 200)
+    /// via the same multi-level select fallback we use for `loadFeed`,
+    /// then filter client-side for month-day match where
+    /// `calendarYear(created_at) < calendarYear(now)`. Acceptable at the
+    /// early-product scale (<200 lifetime posts per user). Promote to a
+    /// server-side RPC / generated column when scale demands.
+    ///
+    /// TODO(milestones-mvp): once a user exceeds ~200 lifetime posts,
+    /// swap this to a server-side filter (PostgREST `or=` with
+    /// `extract(month from created_at)` via an RPC, or a generated
+    /// `month_day text` column).
+    func loadMemoryPosts(forUser userID: UUID, now: Date = Date()) async -> [RemotePost] {
+        let cal = Calendar.current
+        let todayComps = cal.dateComponents([.year, .month, .day], from: now)
+        guard let todayMonth = todayComps.month,
+              let todayDay = todayComps.day,
+              let todayYear = todayComps.year else { return [] }
+
+        for select in Self.selectLevels {
+            do {
+                let posts: [RemotePost] = try await client
+                    .from("posts")
+                    .select(select)
+                    .eq("owner_user_id", value: userID.uuidString)
+                    .order("created_at", ascending: false)
+                    .limit(200)
+                    .execute()
+                    .value
+
+                return posts.filter { post in
+                    let c = cal.dateComponents([.year, .month, .day], from: post.created_at)
+                    guard let m = c.month, let d = c.day, let y = c.year else { return false }
+                    return m == todayMonth && d == todayDay && y < todayYear
+                }
+            } catch {
+                print("[PostsService] loadMemoryPosts select='\(select)' 失败: \(error)")
+            }
+        }
+        return []
+    }
+
     // MARK: - Load Pet Posts (for pet profile page)
 
     func loadPetPosts(for petID: UUID) async {
@@ -302,6 +382,16 @@ final class PostsService: ObservableObject {
 
             await loadFeed(followingIDs: followingIDs, currentUserID: userID)
             errorMessage = nil
+            // Instrumentation: emitted only on the success path (the
+            // feed reload above has already settled). Dimensional
+            // properties only — caption is user-authored text and
+            // deliberately NOT logged; we capture its presence as a
+            // bool so cohorting can answer "do captioned posts
+            // correlate with retention".
+            AnalyticsService.shared.log(.postCreate, properties: [
+                "image_count": .int(imageData.count),
+                "has_caption": .bool(!caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            ])
             return true
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -337,6 +427,45 @@ final class PostsService: ObservableObject {
         }
     }
 
+    // MARK: - Pet cache sync
+
+    /// Rewrites every cached post whose `pet_id` matches `pet.id` so the
+    /// joined `pets` snapshot reflects the updated pet. Used after the
+    /// owner changes their pet's avatar / accessory — without this, the
+    /// feed keeps rendering the stale pet state (e.g. the illustrated
+    /// `DogAvatar` fallback because the pre-upload snapshot had no
+    /// `avatar_url`) until a hard refresh.
+    ///
+    /// Rebuilds each matching post because `RemotePost.pets` is a `let`
+    /// (the model is a value type captured at JOIN time). The
+    /// non-matching posts are returned as-is so `@Published` only
+    /// re-emits for arrays that actually changed. Idempotent — calling
+    /// this with a pet whose snapshot already matches is a no-op.
+    func patchPet(_ pet: RemotePet) {
+        func rewrite(_ post: RemotePost) -> RemotePost {
+            guard post.pet_id == pet.id else { return post }
+            // If the joined snapshot is already the same, skip the
+            // rebuild so we don't churn `@Published` subscribers.
+            if post.pets == pet { return post }
+            return RemotePost(
+                id: post.id,
+                owner_user_id: post.owner_user_id,
+                pet_id: post.pet_id,
+                caption: post.caption,
+                mood: post.mood,
+                created_at: post.created_at,
+                pets: pet,
+                profiles: post.profiles,
+                post_images: post.post_images,
+                likes: post.likes,
+                comments: post.comments
+            )
+        }
+        feedPosts = feedPosts.map(rewrite)
+        userPosts = userPosts.map(rewrite)
+        petPosts = petPosts.map(rewrite)
+    }
+
     // MARK: - Likes (optimistic)
 
     func toggleLike(postID: UUID, userID: UUID) async {
@@ -367,6 +496,12 @@ final class PostsService: ObservableObject {
                     .from("likes")
                     .insert(["post_id": postID.uuidString, "user_id": userID.uuidString])
                     .execute()
+                // Instrumentation: emit only on insert (NOT on unlike —
+                // "like" count is the viral-loop signal, and counting
+                // unlikes would pollute it).
+                AnalyticsService.shared.log(.like, properties: [
+                    "post_id": .string(postID.uuidString)
+                ])
             }
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -536,6 +671,14 @@ final class PostsService: ObservableObject {
             print("[PostsService] addComment insert 失败: \(error)")
             return nil
         }
+
+        // Instrumentation: comment emitted on successful insert only.
+        // Content is user-authored text and deliberately NOT logged —
+        // only the post_id dimensional identifier. Delete path does
+        // not emit (symmetric with `like` / `unlike`).
+        AnalyticsService.shared.log(.comment, properties: [
+            "post_id": .string(postID.uuidString)
+        ])
 
         // Fetch the comment back — try with profiles join first, then without
         let row: CommentRow? = (

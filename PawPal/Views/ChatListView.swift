@@ -26,6 +26,23 @@ struct ChatListView: View {
     /// session.
     @State private var refreshToken = UUID()
 
+    /// Presents the compose-new sheet when the `+` button is tapped.
+    @State private var isComposePresented = false
+    /// Thread pushed after the compose sheet (or any future entry point)
+    /// resolves a conversation id. Using `navigationDestination(item:)`
+    /// — same pattern as FollowListView — avoids manual NavigationPath
+    /// juggling.
+    @State private var pendingThread: ChatThread?
+    /// Pet-first pass (P0 #3): each thread row renders the partner's
+    /// first pet as a small badge in the bottom-right of their avatar,
+    /// so the inbox reads as "my pet's friends' pets" rather than a
+    /// human-to-human list. Keyed by the partner's user id; falls back
+    /// to no badge for partners who have no pets yet.
+    @State private var featuredPets: [UUID: RemotePet] = [:]
+    /// Shared PetsService so the featured-pet fan-out benefits from
+    /// any other surface's cached writes (avatar updates, new pets).
+    @ObservedObject private var petsService = PetsService.shared
+
     private var filteredThreads: [ChatThread] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return chatService.threads }
@@ -48,14 +65,70 @@ struct ChatListView: View {
         .navigationDestination(for: ChatThread.self) { thread in
             ChatDetailView(thread: thread, authManager: authManager)
         }
+        // When the compose sheet picks a partner, we push into the real
+        // ChatDetailView via this item-bound destination. Same pattern as
+        // FollowListView — keeps the sheet from having to manage its own
+        // navigation.
+        .navigationDestination(item: $pendingThread) { thread in
+            ChatDetailView(thread: thread, authManager: authManager)
+        }
+        .sheet(isPresented: $isComposePresented) {
+            if let userID = authManager.currentUser?.id {
+                ComposeNewChatSheet(
+                    viewerID: userID,
+                    onStartConversation: { profile in
+                        await startConversation(with: profile)
+                    }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+        }
         .task(id: refreshToken) {
             guard let userID = authManager.currentUser?.id else { return }
             await chatService.loadThreads(for: userID)
+            await loadFeaturedPetsForThreads()
         }
         .refreshable {
             guard let userID = authManager.currentUser?.id else { return }
             await chatService.loadThreads(for: userID)
+            await loadFeaturedPetsForThreads()
         }
+    }
+
+    /// Fan-out fetch of every partner's first pet so the thread rows
+    /// can badge the user avatar with a pet avatar. One batched query
+    /// across all visible threads — see `PetsService.loadFeaturedPets`
+    /// for the query shape. Called after threads resolve on load and
+    /// pull-to-refresh.
+    private func loadFeaturedPetsForThreads() async {
+        let partnerIDs = Array(Set(chatService.threads.map(\.partnerID)))
+        guard !partnerIDs.isEmpty else {
+            featuredPets = [:]
+            return
+        }
+        featuredPets = await petsService.loadFeaturedPets(for: partnerIDs)
+    }
+
+    /// Starts (or re-opens) a DM with the given profile and routes the
+    /// user into ChatDetailView. Called from the compose-new sheet row
+    /// after it dismisses itself. Mirrors FollowListView.openChat so the
+    /// two surfaces share the same flow.
+    private func startConversation(with partner: RemoteProfile) async {
+        guard let viewerID = authManager.currentUser?.id else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        guard let conversationID = await ChatService.shared.startConversation(
+            userA: viewerID,
+            userB: partner.id
+        ) else { return }
+        pendingThread = ChatThread(
+            conversationID: conversationID,
+            partnerID: partner.id,
+            partnerProfile: partner,
+            lastMessagePreview: nil,
+            lastMessageAt: nil,
+            createdAt: Date()
+        )
     }
 
     // MARK: - Sticky header (serif wordmark + new-chat + search)
@@ -72,10 +145,14 @@ struct ChatListView: View {
                 Spacer()
 
                 Button {
-                    // Compose-new is a follow-up — the MVP relies on the
-                    // contacts screen to kick off new DMs (that route
-                    // already knows which profiles the user follows).
+                    // Compose-new sheet — reuses FollowService to list
+                    // people the user follows and opens a DM via
+                    // ChatService.startConversation (same flow as
+                    // FollowListView). Lets a user with zero threads reach
+                    // a real conversation from inside the 聊天 tab, without
+                    // round-tripping through 发现 first.
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    isComposePresented = true
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 18, weight: .semibold))
@@ -174,6 +251,12 @@ struct ChatListView: View {
     private func threadRow(_ thread: ChatThread) -> some View {
         HStack(spacing: 12) {
             avatar(for: thread, size: 54)
+                .overlay(alignment: .bottomTrailing) {
+                    if let pet = featuredPets[thread.partnerID] {
+                        petBadge(for: pet)
+                            .offset(x: 3, y: 3)
+                    }
+                }
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -237,6 +320,54 @@ struct ChatListView: View {
             .background(PawPalTheme.accent, in: Circle())
     }
 
+    /// Small featured-pet badge pinned to the bottom-right of the partner
+    /// avatar. Keeps the inbox pet-first — the user's face is the label,
+    /// their pet is the accent. White ring keeps it legible on every
+    /// avatar variant.
+    @ViewBuilder
+    private func petBadge(for pet: RemotePet) -> some View {
+        let badge: CGFloat = 22
+        ZStack {
+            if let urlStr = pet.avatar_url, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    default:
+                        petBadgeFallback(for: pet)
+                    }
+                }
+                .frame(width: badge, height: badge)
+                .clipShape(Circle())
+            } else {
+                petBadgeFallback(for: pet)
+                    .frame(width: badge, height: badge)
+            }
+        }
+        .overlay(Circle().stroke(Color.white, lineWidth: 2))
+    }
+
+    @ViewBuilder
+    private func petBadgeFallback(for pet: RemotePet) -> some View {
+        ZStack {
+            Circle().fill(PawPalTheme.cardSoft)
+            Text(speciesEmoji(for: pet.species ?? ""))
+                .font(.system(size: 12))
+        }
+    }
+
+    private func speciesEmoji(for species: String) -> String {
+        switch species.lowercased() {
+        case "dog":             return "🐶"
+        case "cat":             return "🐱"
+        case "rabbit", "bunny": return "🐰"
+        case "bird":            return "🦜"
+        case "fish":            return "🐟"
+        case "hamster":         return "🐹"
+        default:                return "🐾"
+        }
+    }
+
     /// Short, human-readable time ago ("刚刚", "3 分钟前", "昨天", "4月9日")
     /// for the inbox row. Nil falls back to an empty string so new
     /// threads with no message yet don't render "1970-01-01".
@@ -255,5 +386,227 @@ struct ChatListView: View {
         let f = DateFormatter()
         f.dateFormat = "M月d日"
         return f.string(from: date)
+    }
+}
+
+// MARK: - Compose New Chat Sheet
+//
+// Lists the people the viewer follows so they can kick off a DM without
+// leaving the 聊天 tab. Matches FollowListView's row shape (avatar + handle
+// + display name) so the two surfaces feel like siblings rather than one-off
+// designs. Loads lazily in a `.task` — the sheet renders its skeleton
+// immediately and fills in once `loadFollowingProfiles` resolves.
+private struct ComposeNewChatSheet: View {
+    let viewerID: UUID
+    /// Called when the viewer taps a row. The parent dismisses the sheet
+    /// and pushes ChatDetailView for the resolved conversation.
+    let onStartConversation: (RemoteProfile) async -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var followService = FollowService()
+    @ObservedObject private var petsService = PetsService.shared
+    @State private var profiles: [RemoteProfile] = []
+    /// Pet-first pass (P0 #3): mirror the inbox list row treatment — a
+    /// small pet badge in the bottom-right of each user avatar. Keyed
+    /// by user id; absent for users with no pets yet.
+    @State private var featuredPets: [UUID: RemotePet] = [:]
+    @State private var isLoading = true
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if profiles.isEmpty {
+                    emptyState
+                } else {
+                    list
+                }
+            }
+            .navigationTitle("发起聊天")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("取消") { dismiss() }
+                        .foregroundStyle(PawPalTheme.primaryText)
+                }
+            }
+        }
+        .task {
+            profiles = await followService.loadFollowingProfiles(for: viewerID)
+            isLoading = false
+            // Fan-out the featured-pet query once we know who the viewer
+            // follows — same shape as the FollowListView / ChatListView
+            // loaders so the compose sheet doesn't read as a regressed
+            // human-first surface.
+            let ids = profiles.map(\.id)
+            if !ids.isEmpty {
+                featuredPets = await petsService.loadFeaturedPets(for: ids)
+            }
+        }
+    }
+
+    private var list: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(profiles, id: \.id) { profile in
+                    Button {
+                        dismiss()
+                        Task { await onStartConversation(profile) }
+                    } label: {
+                        row(for: profile)
+                    }
+                    .buttonStyle(.plain)
+                    Divider()
+                        .padding(.leading, 76)
+                }
+            }
+            .padding(.bottom, 16)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private func row(for profile: RemoteProfile) -> some View {
+        HStack(spacing: 12) {
+            avatar(for: profile)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayHandle(profile))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(PawPalTheme.primaryText)
+                    .lineLimit(1)
+                if let display = profile.display_name?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !display.isEmpty, display != profile.username {
+                    Text(display)
+                        .font(.system(size: 12))
+                        .foregroundStyle(PawPalTheme.tertiaryText)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(PawPalTheme.tertiaryText)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func avatar(for profile: RemoteProfile) -> some View {
+        let size: CGFloat = 48
+        Group {
+            if let urlString = profile.avatar_url,
+               let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image): image.resizable().scaledToFill()
+                    default: initial(for: profile, size: size)
+                    }
+                }
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+            } else {
+                initial(for: profile, size: size)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if let pet = featuredPets[profile.id] {
+                petBadge(for: pet)
+                    .offset(x: 3, y: 3)
+            }
+        }
+    }
+
+    private func initial(for profile: RemoteProfile, size: CGFloat) -> some View {
+        let letter: String = {
+            if let name = profile.display_name?.prefix(1), !name.isEmpty { return String(name) }
+            if let name = profile.username?.prefix(1), !name.isEmpty { return String(name) }
+            return "?"
+        }()
+        return Text(letter.uppercased())
+            .font(.system(size: size * 0.38, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(PawPalTheme.accent, in: Circle())
+    }
+
+    /// Small featured-pet badge pinned to the bottom-right of the user
+    /// avatar. Mirrors the treatment in ChatListView.threadRow so the
+    /// two surfaces read as siblings.
+    @ViewBuilder
+    private func petBadge(for pet: RemotePet) -> some View {
+        let badge: CGFloat = 22
+        ZStack {
+            if let urlStr = pet.avatar_url, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    default:
+                        petBadgeFallback(for: pet)
+                    }
+                }
+                .frame(width: badge, height: badge)
+                .clipShape(Circle())
+            } else {
+                petBadgeFallback(for: pet)
+                    .frame(width: badge, height: badge)
+            }
+        }
+        .overlay(Circle().stroke(Color.white, lineWidth: 2))
+    }
+
+    @ViewBuilder
+    private func petBadgeFallback(for pet: RemotePet) -> some View {
+        ZStack {
+            Circle().fill(PawPalTheme.cardSoft)
+            Text(speciesEmoji(for: pet.species ?? ""))
+                .font(.system(size: 12))
+        }
+    }
+
+    private func speciesEmoji(for species: String) -> String {
+        switch species.lowercased() {
+        case "dog":             return "🐶"
+        case "cat":             return "🐱"
+        case "rabbit", "bunny": return "🐰"
+        case "bird":            return "🦜"
+        case "fish":            return "🐟"
+        case "hamster":         return "🐹"
+        default:                return "🐾"
+        }
+    }
+
+    /// Empty state — the viewer follows nobody yet, so there's nobody to
+    /// DM. Point them at the 发现 tab to find people to follow first.
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "person.2")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(PawPalTheme.tertiaryText)
+            Text("先去关注一些朋友吧")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(PawPalTheme.primaryText)
+            Text("在发现页搜索好友并关注他们的宠物,就能在这里直接发消息了")
+                .font(.system(size: 13))
+                .foregroundStyle(PawPalTheme.secondaryText)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 32)
+    }
+
+    private func displayHandle(_ profile: RemoteProfile) -> String {
+        if let username = profile.username?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !username.isEmpty {
+            return "@\(username)"
+        }
+        if let name = profile.display_name?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !name.isEmpty {
+            return name
+        }
+        return "@\(String(profile.id.uuidString.prefix(8)))"
     }
 }

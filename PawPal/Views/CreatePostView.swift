@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import UIKit
 
 struct CreatePostView: View {
     @Bindable var authManager: AuthManager
@@ -15,8 +16,59 @@ struct CreatePostView: View {
     @State private var selectedItems: [PhotosPickerItem] = []
     @State private var selectedImageData: [Data] = []
     @State private var didPost = false
+    @State private var showingPetPicker = false
+    @State private var photoCarouselIndex = 0
 
     let onPostPublished: (() -> Void)?
+
+    /// Pre-seeded caption from a milestone / memory tap. When non-nil and
+    /// `caption` is still empty at `.task` time, this is copied in so the
+    /// composer opens with the prompt already drafted.
+    ///
+    /// NOTE: Declared without a `= nil` default at the property level
+    /// because Swift's synthesized memberwise init does not honour
+    /// SE-0242 defaults reliably when the surrounding property list is
+    /// dominated by property wrappers (@Bindable, @StateObject,
+    /// @AppStorage, @State above). The explicit init below carries the
+    /// defaults instead, which keeps `MainTabView`'s 2-arg call site
+    /// (`CreatePostView(authManager:) { ... }`) compiling while letting
+    /// the milestone tap sites pass all four named args.
+    let prefillCaption: String?
+
+    /// Pre-selected pet from a milestone / memory tap. Takes precedence
+    /// over the persisted `activePetID` so tapping a milestone for Pet A
+    /// doesn't accidentally open the composer on Pet B because B was the
+    /// most recently composed-for pet. See note on `prefillCaption`
+    /// above for why the default lives on the explicit init, not here.
+    let prefillPetID: UUID?
+
+    /// Explicit init so the prefill properties get reachable defaults.
+    /// See the note on `prefillCaption` for the SE-0242 quirk that
+    /// motivates this. All four parameters are named; the tab-bar call
+    /// site uses the trailing-closure form for `onPostPublished` and
+    /// relies on the prefill defaults to fill in nil.
+    init(
+        authManager: AuthManager,
+        onPostPublished: (() -> Void)? = nil,
+        prefillCaption: String? = nil,
+        prefillPetID: UUID? = nil
+    ) {
+        self._authManager = Bindable(authManager)
+        self.onPostPublished = onPostPublished
+        self.prefillCaption = prefillCaption
+        self.prefillPetID = prefillPetID
+    }
+
+    /// Pet-first mood chips — subject is the pet, not the user. Single-select.
+    private let moodChips: [MoodChip] = [
+        MoodChip(emoji: "😋", label: "正在吃饭"),
+        MoodChip(emoji: "🐾", label: "散步中"),
+        MoodChip(emoji: "🥱", label: "犯困了"),
+        MoodChip(emoji: "🎾", label: "玩耍中"),
+        MoodChip(emoji: "🛁", label: "洗澡中"),
+        MoodChip(emoji: "🥰", label: "撒娇中"),
+        MoodChip(emoji: "🧸", label: "发呆中")
+    ]
 
     private var selectedPet: RemotePet? {
         petsService.pets.first(where: { $0.id == selectedPetID })
@@ -31,11 +83,11 @@ struct CreatePostView: View {
             PawPalBackground().ignoresSafeArea()
 
             ScrollView {
-                VStack(spacing: 0) {
+                VStack(spacing: 16) {
                     customHeader
                         .padding(.horizontal, 20)
-                        .padding(.top, 16)
-                        .padding(.bottom, 20)
+                        .padding(.top, 8)
+                        .padding(.bottom, 4)
 
                     if petsService.isLoading {
                         ProgressView()
@@ -43,31 +95,28 @@ struct CreatePostView: View {
                     } else if petsService.pets.isEmpty {
                         noPetsPrompt
                     } else {
-                        VStack(spacing: 16) {
-                            petSelectorSection
-                            composerSection
-                            if !selectedImageData.isEmpty {
-                                imagePreviewSection
-                            }
-                            mediaActionsRow
-                        }
-                        .padding(.horizontal, 16)
-                    }
+                        petHeroCard
+                        photoCard
+                        captionCard
+                        moodRow
 
-                    if let error = postsService.errorMessage {
-                        Text(error)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 20)
-                            .padding(.top, 8)
+                        if let error = postsService.errorMessage {
+                            Text(error)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.red)
+                                .padding(.horizontal, 4)
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
-                .padding(.bottom, 100)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 120)
             }
             .scrollIndicators(.hidden)
 
             if !petsService.pets.isEmpty {
-                postButtonBar
+                submitBar
             }
         }
         .navigationTitle("")
@@ -79,11 +128,26 @@ struct CreatePostView: View {
                 async let follows: () = followService.loadFollowing(for: user.id)
                 _ = await (pets, follows)
             }
-            if let activeID = UUID(uuidString: activePetID),
-               petsService.pets.contains(where: { $0.id == activeID }) {
+            // Prefill precedence: explicit milestone/memory pet → persisted
+            // activePetID → first available. A milestone tap for Pet A must
+            // land on Pet A even if the user last composed for Pet B.
+            if let prefill = prefillPetID,
+               petsService.pets.contains(where: { $0.id == prefill }) {
+                selectedPetID = prefill
+            } else if let activeID = UUID(uuidString: activePetID),
+                      petsService.pets.contains(where: { $0.id == activeID }) {
                 selectedPetID = activeID
             } else {
                 selectedPetID = petsService.pets.first?.id
+            }
+
+            // Seed the caption from the milestone / memory prompt if the
+            // user hasn't typed anything yet. Guarded on `caption.isEmpty`
+            // so a second open with the same prefill (unlikely, but
+            // possible via rapid tap → dismiss → re-tap) doesn't stomp
+            // the user's in-progress edits.
+            if caption.isEmpty, let prefillCaption, !prefillCaption.isEmpty {
+                caption = prefillCaption
             }
         }
         .onChange(of: selectedItems) { _, newItems in
@@ -92,21 +156,63 @@ struct CreatePostView: View {
         .onChange(of: selectedPetID) { _, newValue in
             if let newValue { activePetID = newValue.uuidString }
         }
+        .sheet(isPresented: $showingPetPicker) {
+            petPickerSheet
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     // MARK: - Header
 
     private var customHeader: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("发布动态")
-                    .font(.system(size: 26, weight: .bold, design: .rounded))
-                    .foregroundStyle(PawPalTheme.primaryText)
-                Text("每条动态都需要关联一只你的宠物 🐾")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(PawPalTheme.tertiaryText)
+        HStack(alignment: .center) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                onPostPublished?()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(PawPalTheme.secondaryText)
+                    .frame(width: 36, height: 36)
+                    .background(PawPalTheme.card, in: Circle())
+                    .shadow(color: PawPalTheme.softShadow, radius: 6, y: 2)
             }
+            .buttonStyle(.plain)
+
             Spacer()
+
+            Text("分享毛孩子的今日")
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.primaryText)
+
+            Spacer()
+
+            Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Task { await savePost() }
+            } label: {
+                Text(postsService.isPosting ? "发布中" : "发布")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 9)
+                    .background(
+                        canPost && !postsService.isPosting
+                            ? AnyShapeStyle(
+                                LinearGradient(
+                                    colors: [PawPalTheme.orange, PawPalTheme.orangeSoft],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                              )
+                            : AnyShapeStyle(PawPalTheme.tertiaryText.opacity(0.3)),
+                        in: Capsule()
+                    )
+                    .animation(.spring(response: 0.35, dampingFraction: 0.6), value: canPost)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canPost || postsService.isPosting)
         }
     }
 
@@ -116,296 +222,448 @@ struct CreatePostView: View {
         VStack(spacing: 16) {
             Text("🐾")
                 .font(.system(size: 52))
-            Text("请先添加宠物")
+            Text("先添加你的毛孩子吧")
                 .font(.system(size: 20, weight: .bold, design: .rounded))
                 .foregroundStyle(PawPalTheme.primaryText)
-            Text("每条动态都需要宠物，先去个人主页添加一只吧。")
+            Text("在个人主页添加一只，就能开始记录 TA 的每一个精彩瞬间。")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
 
-            Text("添加宠物后就能回来发动态")
+            Text("添加后随时回来分享 TA 的日常")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(PawPalTheme.tertiaryText)
         }
         .padding(.top, 80)
     }
 
-    // MARK: - Pet selector
+    // MARK: - Pet hero card (MOST prominent — pet is the protagonist)
 
-    private var petSelectorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Text("发布身份")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(PawPalTheme.secondaryText)
-                Text("必选")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(PawPalTheme.orange)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(PawPalTheme.orange.opacity(0.12), in: Capsule())
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(petsService.pets) { pet in
-                        petChip(pet)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-        }
-        .padding(16)
-        .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .shadow(color: PawPalTheme.softShadow, radius: 12, y: 4)
-    }
-
-    private func petChip(_ pet: RemotePet) -> some View {
-        let isSelected = selectedPetID == pet.id
-        return Button {
-            selectedPetID = pet.id
+    private var petHeroCard: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            showingPetPicker = true
         } label: {
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(isSelected ? PawPalTheme.orange : PawPalTheme.cardSoft)
-                        .frame(width: 38, height: 38)
-                    if let urlStr = pet.avatar_url, let url = URL(string: urlStr) {
-                        AsyncImage(url: url) { phase in
-                            if case .success(let img) = phase {
-                                img.resizable().scaledToFill()
-                                    .frame(width: 38, height: 38)
-                                    .clipShape(Circle())
-                            } else {
-                                Text(speciesEmoji(for: pet.species ?? ""))
-                                    .font(.system(size: 18))
-                            }
-                        }
+            HStack(spacing: 14) {
+                petAvatar(for: selectedPet, size: 56)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(selectedPet?.name ?? "选一只毛孩子")
+                            .font(.system(size: 18, weight: .semibold, design: .rounded))
+                            .foregroundStyle(PawPalTheme.primaryText)
+                        Text("今日想说")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(PawPalTheme.orange)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(PawPalTheme.orange.opacity(0.12), in: Capsule())
+                    }
+
+                    if let pet = selectedPet {
+                        speciesBreedChip(for: pet)
                     } else {
-                        Text(speciesEmoji(for: pet.species ?? ""))
-                            .font(.system(size: 18))
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(pet.name)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(isSelected ? .white : PawPalTheme.primaryText)
-                    if let species = pet.species, !species.isEmpty {
-                        Text(speciesDisplayName(species))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(isSelected ? .white.opacity(0.8) : PawPalTheme.tertiaryText)
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                isSelected ? PawPalTheme.orange : PawPalTheme.background,
-                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(isSelected ? Color.clear : PawPalTheme.orangeGlow, lineWidth: 1.5)
-            )
-            .shadow(color: isSelected ? PawPalTheme.orange.opacity(0.3) : .clear, radius: 8, y: 4)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Mood emoji picker
-
-    private var moodEmojiPicker: some View {
-        let moodEmojis = ["😊", "😍", "🤔", "😴", "🤩", "😻", "🥰", "🎉"]
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("心情标签")
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(PawPalTheme.secondaryText)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(moodEmojis, id: \.self) { emoji in
-                        Button {
-                            mood = emoji == mood ? "" : emoji
-                        } label: {
-                            Text(emoji)
-                                .font(.system(size: 22))
-                                .frame(width: 44, height: 44)
-                                .background(
-                                    mood == emoji ? PawPalTheme.orange.opacity(0.2) : Color.clear,
-                                    in: Circle()
-                                )
-                                .overlay(
-                                    Circle().stroke(
-                                        mood == emoji ? PawPalTheme.orange : Color.clear,
-                                        lineWidth: 2
-                                    )
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Text composer
-
-    private var composerSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            let petName = selectedPet.map { $0.name } ?? "你的宠物"
-
-            TextField("今天想分享一下 \(petName) 的什么瞬间？", text: $caption, axis: .vertical)
-                .lineLimit(6...14)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(PawPalTheme.primaryText)
-
-            Divider()
-                .overlay(PawPalTheme.orangeGlow)
-
-            moodEmojiPicker
-        }
-        .padding(16)
-        .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .shadow(color: PawPalTheme.softShadow, radius: 12, y: 4)
-    }
-
-    // MARK: - Image preview
-
-    private var imagePreviewSection: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(Array(selectedImageData.enumerated()), id: \.offset) { index, data in
-                    if let uiImage = UIImage(data: data) {
-                        ZStack(alignment: .topLeading) {
-                            ZStack(alignment: .topTrailing) {
-                                Image(uiImage: uiImage)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 100, height: 100)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                                Button {
-                                    selectedImageData.remove(at: index)
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 18))
-                                        .foregroundStyle(.white)
-                                        .background(Color.black.opacity(0.4), in: Circle())
-                                }
-                                .offset(x: 6, y: -6)
-                            }
-
-                            Text("\(index + 1)")
-                                .font(.system(size: 13, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white)
-                                .frame(width: 28, height: 28)
-                                .background(PawPalTheme.orange, in: Circle())
-                                .offset(x: -6, y: -6)
-                        }
-                    }
-                }
-            }
-            .padding(.vertical, 4)
-        }
-        .padding(16)
-        .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .shadow(color: PawPalTheme.softShadow, radius: 12, y: 4)
-    }
-
-    // MARK: - Media actions
-
-    private var mediaActionsRow: some View {
-        HStack(spacing: 12) {
-            PhotosPicker(selection: $selectedItems, maxSelectionCount: 9, matching: .images) {
-                HStack(spacing: 8) {
-                    Image(systemName: "photo.on.rectangle")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("照片")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                }
-                .foregroundStyle(PawPalTheme.secondaryText)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .shadow(color: PawPalTheme.softShadow, radius: 8, y: 3)
-            }
-            Spacer()
-        }
-    }
-
-    // MARK: - Post button bar
-
-    private var postButtonBar: some View {
-        VStack(spacing: 0) {
-            Divider().opacity(0.1)
-            HStack(spacing: 16) {
-                if postsService.isPosting {
-                    HStack(spacing: 8) {
-                        ProgressView().scaleEffect(0.8)
-                        Text("发布中…")
+                        Text("点击选择发布身份")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(PawPalTheme.secondaryText)
+                            .foregroundStyle(PawPalTheme.tertiaryText)
                     }
-                } else if didPost {
-                    Text("发布成功，正在带你回首页")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(PawPalTheme.orange)
-                } else if let errorMsg = postsService.errorMessage {
-                    Text(errorMsg)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.red)
-                        .lineLimit(2)
-                } else if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("先写点内容才能发布")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(PawPalTheme.tertiaryText)
-                } else if selectedPetID == nil {
-                    Text("请选择一只宠物再发布")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(PawPalTheme.tertiaryText)
-                } else {
-                    Text("可以发布啦！")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(PawPalTheme.orange)
                 }
 
                 Spacer()
 
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(PawPalTheme.tertiaryText)
+            }
+            .padding(18)
+            .background(PawPalTheme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(PawPalTheme.orangeGlow.opacity(0.5), lineWidth: 1)
+            )
+            .shadow(color: PawPalTheme.softShadow, radius: 12, y: 3)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func speciesBreedChip(for pet: RemotePet) -> some View {
+        let species = pet.species.map { speciesDisplayName($0) } ?? ""
+        let breed = pet.breed?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let parts = [species, breed].filter { !$0.isEmpty }
+        let label = parts.isEmpty ? "毛孩子" : parts.joined(separator: " · ")
+
+        return HStack(spacing: 4) {
+            Text(speciesEmoji(for: pet.species ?? ""))
+                .font(.system(size: 11))
+            Text(label)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(PawPalTheme.secondaryText)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 3)
+        .background(PawPalTheme.cardSoft, in: Capsule())
+    }
+
+    private func petAvatar(for pet: RemotePet?, size: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .fill(PawPalTheme.cardSoft)
+                .frame(width: size, height: size)
+
+            if let pet, let urlStr = pet.avatar_url, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let img) = phase {
+                        img.resizable().scaledToFill()
+                            .frame(width: size, height: size)
+                            .clipShape(Circle())
+                    } else {
+                        Text(speciesEmoji(for: pet.species ?? ""))
+                            .font(.system(size: size * 0.46))
+                    }
+                }
+            } else if let pet {
+                Text(speciesEmoji(for: pet.species ?? ""))
+                    .font(.system(size: size * 0.46))
+            } else {
+                Text("🐾")
+                    .font(.system(size: size * 0.46))
+            }
+        }
+        .overlay(
+            Circle().stroke(PawPalTheme.orangeGlow, lineWidth: 2)
+        )
+    }
+
+    // MARK: - Pet picker sheet
+
+    private var petPickerSheet: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("选择发布身份")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundStyle(PawPalTheme.primaryText)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 24)
+            .padding(.bottom, 16)
+
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(petsService.pets) { pet in
+                        Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                                selectedPetID = pet.id
+                            }
+                            showingPetPicker = false
+                        } label: {
+                            HStack(spacing: 14) {
+                                petAvatar(for: pet, size: 44)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(pet.name)
+                                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                                        .foregroundStyle(PawPalTheme.primaryText)
+                                    if let species = pet.species, !species.isEmpty {
+                                        Text(speciesDisplayName(species))
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(PawPalTheme.tertiaryText)
+                                    }
+                                }
+                                Spacer()
+                                if pet.id == selectedPetID {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(PawPalTheme.orange)
+                                }
+                            }
+                            .padding(14)
+                            .background(
+                                pet.id == selectedPetID
+                                    ? PawPalTheme.orange.opacity(0.08)
+                                    : PawPalTheme.card,
+                                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(
+                                        pet.id == selectedPetID
+                                            ? PawPalTheme.orange
+                                            : PawPalTheme.hairline,
+                                        lineWidth: 1
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
+            }
+        }
+        .background(PawPalTheme.background.ignoresSafeArea())
+    }
+
+    // MARK: - Photo card
+
+    private var photoCard: some View {
+        Group {
+            if selectedImageData.isEmpty {
+                PhotosPicker(selection: $selectedItems, maxSelectionCount: 9, matching: .images) {
+                    VStack(spacing: 10) {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundStyle(PawPalTheme.orange)
+                            .frame(width: 64, height: 64)
+                            .background(PawPalTheme.orange.opacity(0.12), in: Circle())
+                        Text("添加一张照片")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(PawPalTheme.primaryText)
+                        Text("让大家看看 TA 今天的样子")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(PawPalTheme.tertiaryText)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 220)
+                    .background(PawPalTheme.cardSoft, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .strokeBorder(
+                                PawPalTheme.orangeGlow,
+                                style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            } else {
+                photoCarousel
+            }
+        }
+    }
+
+    private var photoCarousel: some View {
+        VStack(spacing: 10) {
+            TabView(selection: $photoCarouselIndex) {
+                ForEach(Array(selectedImageData.enumerated()), id: \.offset) { index, data in
+                    ZStack(alignment: .topTrailing) {
+                        if let uiImage = UIImage(data: data) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 260)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        }
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                                selectedImageData.remove(at: index)
+                                if selectedItems.indices.contains(index) {
+                                    selectedItems.remove(at: index)
+                                }
+                                photoCarouselIndex = min(photoCarouselIndex, max(0, selectedImageData.count - 1))
+                            }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 28, height: 28)
+                                .background(Color.black.opacity(0.45), in: Circle())
+                        }
+                        .padding(10)
+                        .buttonStyle(.plain)
+                    }
+                    .tag(index)
+                }
+            }
+            .frame(height: 260)
+            .tabViewStyle(.page(indexDisplayMode: .never))
+
+            HStack(spacing: 12) {
+                if selectedImageData.count > 1 {
+                    HStack(spacing: 6) {
+                        ForEach(0..<selectedImageData.count, id: \.self) { i in
+                            Circle()
+                                .fill(
+                                    i == photoCarouselIndex
+                                        ? PawPalTheme.orange
+                                        : PawPalTheme.tertiaryText.opacity(0.3)
+                                )
+                                .frame(width: 6, height: 6)
+                        }
+                    }
+                }
+                Spacer()
+                PhotosPicker(selection: $selectedItems, maxSelectionCount: 9, matching: .images) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "photo.on.rectangle")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("替换照片")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(PawPalTheme.orange)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(PawPalTheme.orange.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+
+    // MARK: - Caption card
+
+    private var captionCard: some View {
+        let petName = selectedPet?.name ?? "TA"
+        let placeholder = "说点 \(petName) 今天的故事吧…"
+
+        return ZStack(alignment: .topLeading) {
+            if caption.isEmpty {
+                Text(placeholder)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(PawPalTheme.tertiaryText)
+                    .padding(.top, 2)
+                    .padding(.leading, 4)
+                    .allowsHitTesting(false)
+            }
+
+            TextField("", text: $caption, axis: .vertical)
+                .lineLimit(4...10)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(PawPalTheme.primaryText)
+                .tint(PawPalTheme.orange)
+        }
+        .padding(16)
+        .background(PawPalTheme.cardSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(PawPalTheme.hairline, lineWidth: 0.5)
+        )
+    }
+
+    // MARK: - Mood chips row
+
+    private var moodRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("TA 现在的状态")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(PawPalTheme.secondaryText)
+                .padding(.leading, 4)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(moodChips) { chip in
+                        moodChipButton(chip)
+                    }
+                }
+                .padding(.vertical, 2)
+                .padding(.horizontal, 4)
+            }
+        }
+    }
+
+    private func moodChipButton(_ chip: MoodChip) -> some View {
+        let value = "\(chip.emoji) \(chip.label)"
+        let isSelected = mood == value
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                mood = isSelected ? "" : value
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(chip.emoji)
+                    .font(.system(size: 15))
+                Text(chip.label)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(isSelected ? .white : PawPalTheme.secondaryText)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(
+                isSelected ? PawPalTheme.orange : PawPalTheme.card,
+                in: Capsule()
+            )
+            .overlay(
+                Capsule()
+                    .stroke(
+                        isSelected ? Color.clear : PawPalTheme.hairline,
+                        lineWidth: 0.5
+                    )
+            )
+            .shadow(
+                color: isSelected ? PawPalTheme.orange.opacity(0.3) : PawPalTheme.softShadow,
+                radius: isSelected ? 8 : 3,
+                y: 1
+            )
+            .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isSelected)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Submit bar (gradient)
+
+    private var submitBar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
                 Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     Task { await savePost() }
                 } label: {
                     HStack(spacing: 8) {
-                        Text(didPost ? "已发布！🎉" : "发布")
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                        if !didPost && !postsService.isPosting {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 16))
+                        if postsService.isPosting {
+                            ProgressView().tint(.white)
+                        } else if didPost {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 16, weight: .bold))
+                        } else {
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 15, weight: .bold))
                         }
+                        Text(didPost ? "已发布！🎉" : (postsService.isPosting ? "发布中…" : "发布这条动态"))
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
                     }
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 15)
                     .background(
                         canPost && !postsService.isPosting
-                            ? PawPalTheme.orange
-                            : PawPalTheme.tertiaryText.opacity(0.3),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            ? AnyShapeStyle(
+                                LinearGradient(
+                                    colors: [PawPalTheme.orange, PawPalTheme.orangeSoft],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                              )
+                            : AnyShapeStyle(PawPalTheme.tertiaryText.opacity(0.3)),
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous)
                     )
-                    .animation(.easeInOut(duration: 0.15), value: canPost)
+                    .shadow(
+                        color: canPost ? PawPalTheme.orange.opacity(0.4) : .clear,
+                        radius: 14, y: 6
+                    )
+                    .animation(.spring(response: 0.35, dampingFraction: 0.6), value: canPost)
                 }
                 .disabled(!canPost || postsService.isPosting)
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 18)
             .background(.ultraThinMaterial)
         }
     }
 
     // MARK: - Helpers
+
+    private struct MoodChip: Identifiable {
+        let id = UUID()
+        let emoji: String
+        let label: String
+    }
 
     private func speciesEmoji(for species: String) -> String {
         switch species.lowercased() {
@@ -427,6 +685,7 @@ struct CreatePostView: View {
             }
         }
         selectedImageData = loaded
+        photoCarouselIndex = 0
     }
 
     private func speciesDisplayName(_ english: String) -> String {
@@ -463,7 +722,8 @@ struct CreatePostView: View {
             mood = ""
             selectedItems = []
             selectedImageData = []
-            withAnimation { didPost = true }
+            photoCarouselIndex = 0
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) { didPost = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 onPostPublished?()
                 withAnimation { didPost = false }

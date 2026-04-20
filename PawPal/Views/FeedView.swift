@@ -1,6 +1,15 @@
 import SwiftUI
 import UIKit
 
+/// Identifiable payload for `.fullScreenCover(item:)` — keying on a
+/// per-opening UUID lets the presentation refresh cleanly each time the
+/// user taps a different rail bubble without a stale viewer lingering.
+struct StoryViewerState: Identifiable {
+    let id = UUID()
+    let bundles: [PetStoriesBundle]
+    let initialIndex: Int
+}
+
 struct FeedView: View {
     @Bindable var authManager: AuthManager
     /// Rotated by MainTabView whenever the user publishes a new post so that
@@ -9,6 +18,11 @@ struct FeedView: View {
     @StateObject private var postsService  = PostsService()
     @StateObject private var followService = FollowService()
     @StateObject private var petsService   = PetsService()
+    /// Stories cache (active <24h) keyed by pet_id. Singleton-backed so a
+    /// posted story lights up the rail ring without re-fetching. Matches
+    /// ChatService / VirtualPetStateStore usage — `@ObservedObject` on a
+    /// `.shared` singleton avoids StateObject's "initialised once" trap.
+    @ObservedObject private var storyService = StoryService.shared
     @State private var pendingDeletePost: RemotePost?
     @State private var toastMessage: String?
     /// Prevents redundant full reloads on every tab switch once feed is populated.
@@ -18,6 +32,41 @@ struct FeedView: View {
     @State private var initialLoadDone = false
     @State private var isRefreshingFeed = false
 
+    // Milestones MVP — birthday card + memory-loop card shown above the
+    // stories rail. `milestonesService` is stateless so a struct-level
+    // `let` is safe; derivation runs inside `.task` against the already-
+    // loaded pets / posts snapshot. `composerPrefill` drives the composer
+    // sheet below when the user taps a card.
+    private let milestonesService = MilestonesService()
+    @State private var milestonesToday: [MilestonesService.Milestone] = []
+    @State private var memoriesToday: [MilestonesService.MemoryPost] = []
+    @State private var composerPrefill: ComposerPrefill?
+
+    // Playdates MVP — pinned card stack and post-playdate prompt.
+    // `playdateService` is observed rather than owned so the service's
+    // cache + `.playdateDidChange` broadcasts drive the three derived
+    // `@State` collections via `recomputePlaydateCards()`.
+    @ObservedObject private var playdateService = PlaydateService.shared
+    @State private var pendingInviteRows: [RemotePlaydate] = []
+    @State private var upcomingAcceptedRows: [RemotePlaydate] = []
+    @State private var postPlaydatePrompt: RemotePlaydate?
+    /// When set, FeedView pushes `PlaydateDetailView` via an
+    /// `.navigationDestination(item:)`. Distinct from the tab-level
+    /// `DeepLinkTarget.playdateID` pathway — tapping a card from the
+    /// Feed shouldn't go through the DeepLink resolver (that's for
+    /// cross-surface push / cold-start routing).
+    @State private var navigatingPlaydate: RemotePlaydate?
+
+    /// Toggles the story composer sheet (tapping an own-pet bubble with the
+    /// "+" badge). One bool for the whole rail — the composer picks its own
+    /// pet from `petsService.pets`, so we don't need to stash a selection.
+    @State private var showingStoryComposer = false
+    /// When non-nil, the story viewer is presented. Wrapping both inputs in
+    /// a single state value means the `.fullScreenCover(item:)` API can key
+    /// the presentation on any opening, and we don't have to juggle two
+    /// related pieces of state.
+    @State private var viewerState: StoryViewerState?
+
     private var myID: UUID? { authManager.currentUser?.id }
 
     // True once we've loaded follows at least once
@@ -25,23 +74,57 @@ struct FeedView: View {
     // User follows at least one person → show filtered feed
     private var isFiltered: Bool { !followService.followingIDs.isEmpty }
 
-    /// Pets from people the user follows that have recent activity in the feed.
-    /// Derived from loaded feed posts — each unique pet appears once, ordered
-    /// by most recent post. Used to populate the "friends' stories" portion
-    /// of the top rail.
+    /// Friends' pets with active (<24h) stories. Drives the non-own half of
+    /// the rail — a friend's pet only appears if StoryService has an active
+    /// story bucket for them, so the rail is now strictly a *stories* rail
+    /// rather than a generic recent-activity list.
+    ///
+    /// Ordered by newest story first so the pet whose last drop is freshest
+    /// sits leftmost. The RemotePet for each entry is read from the joined
+    /// `pet` relation on the first story, which StoryService.loadActiveStories
+    /// populates via PostgREST's `pets(*)` embed.
     private var followedStoryPets: [RemotePet] {
         let myPetIDs = Set(petsService.pets.map(\.id))
-        let sorted = postsService.feedPosts.sorted { $0.created_at > $1.created_at }
-        var seen = Set<UUID>()
-        var result: [RemotePet] = []
-        for post in sorted {
-            guard let pet = post.pet else { continue }
-            if myPetIDs.contains(pet.id) { continue }
-            if seen.contains(pet.id) { continue }
-            seen.insert(pet.id)
-            result.append(pet)
+
+        // Flatten buckets → (pet, newest createdAt) tuples, excluding my
+        // own pets (those render in the `myPets` lane above with a "+" badge).
+        var candidates: [(pet: RemotePet, newest: Date)] = []
+        for (petID, stories) in storyService.activeStoriesByPet {
+            guard !myPetIDs.contains(petID),
+                  let newestStory = stories.max(by: { $0.created_at < $1.created_at }),
+                  let pet = newestStory.pet ?? stories.compactMap(\.pet).first
+            else { continue }
+            candidates.append((pet, newestStory.created_at))
         }
-        return result
+        return candidates
+            .sorted { $0.newest > $1.newest }
+            .map(\.pet)
+    }
+
+    /// Pre-built viewer payload: every pet (own first, then friends) that
+    /// currently has at least one active story, each paired with their
+    /// story stack. Tapping any rail bubble opens the viewer at the
+    /// matching index in this list.
+    private var viewerBundles: [PetStoriesBundle] {
+        let ownPetsWithStories = petsService.pets
+            .sorted { $0.created_at < $1.created_at }
+            .filter { storyService.hasActiveStory(for: $0.id) }
+
+        let friendBundles = followedStoryPets.compactMap { pet -> PetStoriesBundle? in
+            guard let stories = storyService.activeStoriesByPet[pet.id], !stories.isEmpty else {
+                return nil
+            }
+            return PetStoriesBundle(pet: pet, stories: stories)
+        }
+
+        let ownBundles = ownPetsWithStories.compactMap { pet -> PetStoriesBundle? in
+            guard let stories = storyService.activeStoriesByPet[pet.id], !stories.isEmpty else {
+                return nil
+            }
+            return PetStoriesBundle(pet: pet, stories: stories)
+        }
+
+        return ownBundles + friendBundles
     }
 
     var body: some View {
@@ -64,6 +147,75 @@ struct FeedView: View {
                 // up top, then floating post cards stacked below with 18pt
                 // gutters. Distinct from Instagram's flat edge-to-edge look.
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    // Milestone card — birthday-today surface. Sits above the
+                    // stories rail as its own floating white card so the
+                    // rhythm is: milestone → memory → stories → nudge →
+                    // posts. Both cards no-op until their collection is
+                    // non-empty, so users without birthdays see the old flow.
+                    if feedLoaded && !milestonesToday.isEmpty {
+                        MilestoneTodayCard(
+                            milestones: milestonesToday,
+                            onTap: { milestone in
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                print("[Milestone] birthday tapped \(milestone.id)")
+                                composerPrefill = ComposerPrefill(
+                                    petID: milestone.pet.id,
+                                    caption: milestone.prefillCaption
+                                )
+                            }
+                        )
+                        .padding(.horizontal, 14)
+                        .padding(.top, 12)
+                        .padding(.bottom, 4)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    if feedLoaded && !memoriesToday.isEmpty {
+                        MemoryTodayCard(
+                            memories: memoriesToday,
+                            onTap: { memory in
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                print("[Milestone] memory tapped \(memory.id)")
+                                composerPrefill = ComposerPrefill(
+                                    petID: memory.post.pet?.id ?? memory.post.pet_id,
+                                    caption: memory.prefillCaption
+                                )
+                            }
+                        )
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 4)
+                    }
+
+                    // Playdates MVP — pinned pending-invite + upcoming-
+                    // accepted cards. Render order: request cards first
+                    // (they're actionable), then countdown cards (they're
+                    // just nudges). Both sit below Memory and above Stories.
+                    if feedLoaded && !pendingInviteRows.isEmpty {
+                        ForEach(pendingInviteRows) { invite in
+                            PlaydateRequestCard(
+                                playdate: invite,
+                                proposerPet: petFor(id: invite.proposer_pet_id),
+                                inviteePet: petFor(id: invite.invitee_pet_id),
+                                onTap: { navigatingPlaydate = invite }
+                            )
+                            .padding(.horizontal, 14)
+                            .padding(.top, 6)
+                        }
+                    }
+
+                    if feedLoaded && !upcomingAcceptedRows.isEmpty {
+                        ForEach(upcomingAcceptedRows) { accepted in
+                            PlaydateCountdownCard(
+                                playdate: accepted,
+                                proposerPet: petFor(id: accepted.proposer_pet_id),
+                                inviteePet: petFor(id: accepted.invitee_pet_id),
+                                onTap: { navigatingPlaydate = accepted }
+                            )
+                            .padding(.horizontal, 14)
+                            .padding(.top, 6)
+                        }
+                    }
+
                     // Stories rail — your pets first (as "your story"), then
                     // followed pets that have recent activity in the feed.
                     // Wrapped in a white "card" so it floats on the cream page
@@ -73,7 +225,12 @@ struct FeedView: View {
                             HStack(spacing: 6) {
                                 Text("🐾")
                                     .font(.system(size: 13))
-                                Text("小伙伴动态")
+                                // Eyebrow above the stories rail — "毛孩子今日份"
+                                // leans harder into the pet-first framing than
+                                // the older "小伙伴动态" (which read as
+                                // generic-social). Keeps the rhythm warm and
+                                // specifically about the pets, not the humans.
+                                Text("毛孩子今日份")
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(PawPalTheme.secondaryText)
                                     .tracking(0.3)
@@ -87,6 +244,22 @@ struct FeedView: View {
                                 currentDisplayName: displayName,
                                 myPets: petsService.pets,
                                 followedPets: followedStoryPets,
+                                hasActiveStory: { storyService.hasActiveStory(for: $0) },
+                                onTapOwnPet: { pet in
+                                    // Own pet: with a live story → viewer,
+                                    // otherwise open the composer so the
+                                    // "+" badge tap always produces a story.
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    if storyService.hasActiveStory(for: pet.id) {
+                                        openViewer(for: pet.id)
+                                    } else {
+                                        showingStoryComposer = true
+                                    }
+                                },
+                                onTapFriendPet: { pet in
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    openViewer(for: pet.id)
+                                },
                                 onAddPet: nil
                             )
                         }
@@ -155,7 +328,7 @@ struct FeedView: View {
         .refreshable {
             await refreshFeed()
         }
-        .task {
+        .task(id: myID) {
             // Don't attempt any network calls while the Supabase session is still
             // being restored — authenticated requests would fail or return empty
             // results under RLS. The onChange below takes over once it's ready.
@@ -170,7 +343,21 @@ struct FeedView: View {
                 await refreshFeed()
                 feedLoaded = true
             }
+            await reloadStories()
+            await recomputeMilestones()
+            if let uid = myID {
+                await playdateService.loadUpcoming(for: uid)
+                recomputePlaydateCards()
+            }
             initialLoadDone = true
+        }
+        // Any mutation to a playdate (accept / decline / cancel / new
+        // propose landing via realtime in future) broadcasts
+        // `.playdateDidChange`. We re-derive the three state collections
+        // rather than patching them in place — cheap (≤ a few dozen
+        // rows) and avoids subtle drift between cache and UI.
+        .onReceive(NotificationCenter.default.publisher(for: .playdateDidChange)) { _ in
+            recomputePlaydateCards()
         }
         // Kick off the initial load the moment session restoration completes.
         .onChange(of: authManager.isRestoringSession) { _, isRestoring in
@@ -180,16 +367,21 @@ struct FeedView: View {
                 await petsService.loadPets(for: uid)
                 await refreshFeed()
                 feedLoaded = true
+                await reloadStories()
+                await recomputeMilestones()
                 initialLoadDone = true
             }
         }
-        // Re-filter the feed whenever the following set actually changes
-        // (e.g. user followed/unfollowed from ProfileView).
+        // Re-filter the feed + reload stories whenever the following set
+        // actually changes (e.g. user followed/unfollowed from ProfileView).
         // Guard with initialLoadDone so the first-load onChange doesn't fire
         // a second concurrent refreshFeed alongside the one in .task.
         .onChange(of: followService.followingIDs) { oldVal, newVal in
             guard initialLoadDone, newVal != oldVal else { return }
-            Task { await refreshFeed() }
+            Task {
+                await refreshFeed()
+                await reloadStories()
+            }
         }
         // When a new post is published from CreatePostView, reset and reload so
         // the author's own new post appears without a manual pull-to-refresh.
@@ -202,7 +394,18 @@ struct FeedView: View {
                 }
                 await refreshFeed()
                 feedLoaded = true
+                await reloadStories()
+                await recomputeMilestones()
                 initialLoadDone = true
+            }
+        }
+        // Refresh stories + milestone surfaces when the user's own pet set
+        // changes (added / removed a pet, edited a birthday).
+        // followingIDs is already handled above.
+        .onChange(of: petsService.pets) { _, _ in
+            Task {
+                await reloadStories()
+                await recomputeMilestones()
             }
         }
         // Surface errors as a temporary toast
@@ -245,6 +448,74 @@ struct FeedView: View {
                 currentUsername: authManager.currentProfile?.username,
                 postsService: postsService,
                 authManager: authManager
+            )
+        }
+        .navigationDestination(item: $navigatingPlaydate) { playdate in
+            PlaydateDetailView(
+                playdate: playdate,
+                proposerPet: petFor(id: playdate.proposer_pet_id),
+                inviteePet: petFor(id: playdate.invitee_pet_id),
+                currentUserID: myID,
+                authManager: authManager
+            )
+        }
+        // Story composer — reached by tapping an own-pet bubble with no
+        // active story (the "+" badge). Presented with fullScreenCover
+        // so the camera picker (Instagram-style) gets the whole viewport
+        // instead of being clipped by a sheet handle. The previous
+        // sheet-based layout also had a visible title-clipping bug; the
+        // rewrite drops the centered title entirely so the issue can't
+        // come back.
+        .fullScreenCover(isPresented: $showingStoryComposer) {
+            StoryComposerView(
+                authManager: authManager,
+                pets: petsService.pets,
+                onPublished: {
+                    showingStoryComposer = false
+                    Task { await reloadStories() }
+                },
+                onCancel: { showingStoryComposer = false }
+            )
+        }
+        // Story viewer — fullScreenCover so the media gets the entire
+        // viewport without the sheet's pull-down affordance eating a
+        // strip. The item binding keys on the state struct's id, so a
+        // rapid re-open (different pet) correctly re-inits the viewer.
+        .fullScreenCover(item: $viewerState) { state in
+            StoryViewerView(
+                petsWithStories: state.bundles,
+                initialPetIndex: state.initialIndex,
+                currentUserID: myID,
+                onDismiss: { viewerState = nil }
+            )
+        }
+        // Composer sheet driven by milestone / memory taps. Identifiable
+        // prefill keys the sheet so a fresh tap re-instantiates the
+        // composer with the new seed rather than reusing a stale one.
+        .sheet(item: $composerPrefill) { prefill in
+            NavigationStack {
+                CreatePostView(
+                    authManager: authManager,
+                    onPostPublished: { composerPrefill = nil },
+                    prefillCaption: prefill.caption,
+                    prefillPetID: prefill.petID
+                )
+            }
+        }
+        // Post-playdate prompt — shows once per completed playdate per
+        // the UserDefaults flag. CTA bridges into the composer via the
+        // same `composerPrefill` pathway used for milestones.
+        .sheet(item: $postPlaydatePrompt) { playdate in
+            PostPlaydatePromptSheet(
+                playdate: playdate,
+                otherPetName: otherPetName(for: playdate),
+                proposerPetID: playdate.proposer_pet_id,
+                inviteePetID: playdate.invitee_pet_id,
+                onDismiss: { postPlaydatePrompt = nil },
+                onStartPost: { prefill in
+                    postPlaydatePrompt = nil
+                    composerPrefill = prefill
+                }
             )
         }
         .alert("删除这条动态？", isPresented: deletePostAlertBinding, presenting: pendingDeletePost) { post in
@@ -301,6 +572,130 @@ struct FeedView: View {
         }
     }
 
+    /// Ask StoryService for the current active-story set scoped to the
+    /// home rail (my pets ∪ followed friends' pets). Called on initial
+    /// load, on pull-to-refresh via the feed onChange, and whenever the
+    /// follow or pet graph mutates.
+    private func reloadStories() async {
+        let myPetIDs = petsService.pets.map(\.id)
+        // Followed pet IDs — we don't cache these on FollowService yet
+        // (follow graph is user→user, not user→pet), so fall back to
+        // "all pets not mine that we've seen via story pushes from the
+        // backend". Passing my own + any friend pet ids we already know
+        // about from posts keeps the query bounded.
+        let friendPetIDs = Set(
+            postsService.feedPosts.compactMap { $0.pet?.id }
+                .filter { !myPetIDs.contains($0) }
+        )
+        let ids = Array(Set(myPetIDs).union(friendPetIDs))
+        await storyService.loadActiveStories(followedPetIDs: ids.isEmpty ? nil : ids)
+    }
+
+    /// Look up the viewer index for the pet tapped on the rail and
+    /// present the fullScreenCover. Safely no-ops if the pet isn't in
+    /// the viewer bundle list (e.g. their only story just expired).
+    private func openViewer(for petID: UUID) {
+        let bundles = viewerBundles
+        guard let idx = bundles.firstIndex(where: { $0.pet.id == petID }) else { return }
+        viewerState = StoryViewerState(bundles: bundles, initialIndex: idx)
+    }
+
+    /// Look up a pet by id across the caches FeedView observes: the
+    /// viewer's own pets (`petsService.pets`) first, then the subset of
+    /// feed posts' joined pet rows (`postsService.feedPosts`). Returns
+    /// nil when the pet isn't in either surface — the playdate cards
+    /// degrade to a "🐾" emoji placeholder in that case.
+    private func petFor(id: UUID) -> RemotePet? {
+        if let own = petsService.pets.first(where: { $0.id == id }) { return own }
+        if let viaPost = postsService.feedPosts
+            .compactMap(\.pet)
+            .first(where: { $0.id == id })
+        { return viaPost }
+        return nil
+    }
+
+    /// Returns the non-viewer pet's name, for copy like "和 X 的遛弯…".
+    /// Falls back to a generic "毛孩子" when the pet isn't resolvable.
+    private func otherPetName(for playdate: RemotePlaydate) -> String {
+        let myPetIDs = Set(petsService.pets.map(\.id))
+        let otherID: UUID = myPetIDs.contains(playdate.proposer_pet_id)
+            ? playdate.invitee_pet_id
+            : playdate.proposer_pet_id
+        return petFor(id: otherID)?.name ?? "毛孩子"
+    }
+
+    /// Re-derive the three playdate-driven `@State` collections from the
+    /// service's cache. Pure function — safe to call on every broadcast.
+    ///
+    /// Rules:
+    ///   * pendingInviteRows — `status == proposed` AND viewer is invitee
+    ///   * upcomingAcceptedRows — `status == accepted` AND scheduled_at
+    ///     is within the next 48h (hide older / farther-out)
+    ///   * postPlaydatePrompt — one accepted playdate whose scheduled_at
+    ///     was within the last 4h AND the UserDefaults flag is unset.
+    ///     First match wins — surfacing one prompt at a time is enough.
+    private func recomputePlaydateCards() {
+        let all = Array(playdateService.playdates.values)
+        let now = Date()
+        guard let uid = myID else {
+            pendingInviteRows = []
+            upcomingAcceptedRows = []
+            postPlaydatePrompt = nil
+            return
+        }
+
+        pendingInviteRows = all
+            .filter { $0.status == .proposed && $0.invitee_user_id == uid }
+            .sorted { $0.scheduled_at < $1.scheduled_at }
+
+        let fortyEightHours: TimeInterval = 48 * 60 * 60
+        upcomingAcceptedRows = all
+            .filter {
+                $0.status == .accepted &&
+                $0.scheduled_at > now &&
+                $0.scheduled_at.timeIntervalSince(now) <= fortyEightHours
+            }
+            .sorted { $0.scheduled_at < $1.scheduled_at }
+
+        // Post-playdate prompt — accepted row whose scheduled_at is in
+        // the last 4h and whose one-shot flag hasn't been set. We
+        // deliberately ignore `completed` status here because the
+        // sweeper that flips `accepted → completed` is deferred per
+        // spec §9.5.
+        let fourHours: TimeInterval = 4 * 60 * 60
+        let candidate = all
+            .filter {
+                $0.status == .accepted &&
+                $0.scheduled_at <= now &&
+                now.timeIntervalSince($0.scheduled_at) <= fourHours
+            }
+            .sorted { $0.scheduled_at > $1.scheduled_at }
+            .first { candidate in
+                let key = "pawpal.playdate.prompt.\(candidate.id.uuidString)"
+                return !UserDefaults.standard.bool(forKey: key)
+            }
+        // Only replace the binding when the candidate actually changes
+        // — otherwise we'd churn the sheet presentation every broadcast.
+        if postPlaydatePrompt?.id != candidate?.id {
+            postPlaydatePrompt = candidate
+        }
+    }
+
+    /// Rebuilds the birthday-today and memory-loop surfaces off the
+    /// currently loaded pet + own-post snapshots. Cheap — birthday logic
+    /// is pure, and memories touch a single capped (≤200) Supabase query
+    /// scoped to the current user. Called on initial load, on pet graph
+    /// changes, and after a post is published.
+    private func recomputeMilestones() async {
+        milestonesToday = milestonesService.milestonesToday(forPets: petsService.pets)
+        if let uid = myID {
+            let memoryPosts = await postsService.loadMemoryPosts(forUser: uid)
+            memoriesToday = milestonesService.memoriesToday(forUser: uid, from: memoryPosts)
+        } else {
+            memoriesToday = []
+        }
+    }
+
     // MARK: - Follow nudge banner
 
     private var followNudgeBanner: some View {
@@ -318,7 +713,13 @@ struct FeedView: View {
         .background(PawPalTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    // MARK: - Header (serif wordmark + glass square icons)
+    // MARK: - Header (serif wordmark only)
+    //
+    // The tab bar already carries discovery (发现) and chat (聊天), so the
+    // Feed header doesn't need redundant glyph shortcuts. Previously this
+    // row also held search/notifications/DM stubs that fired a "功能还在
+    // 完善中" toast — they've been removed so first-run users don't tap
+    // into dead affordances.
 
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -329,46 +730,6 @@ struct FeedView: View {
                 .lineLimit(1)
 
             Spacer()
-
-            Button {
-                showToast("搜索功能还在完善中")
-            } label: {
-                headerGlyph(systemImage: "magnifyingglass")
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                showToast("通知功能即将上线")
-            } label: {
-                headerGlyph(systemImage: "heart", badge: true)
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                showToast("私信功能还在完善中")
-            } label: {
-                headerGlyph(systemImage: "paperplane")
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    /// Flat header icon — Instagram's nav icons aren't enclosed in cards,
-    /// they're just outlined glyphs sitting on the white bar.
-    private func headerGlyph(systemImage: String, badge: Bool = false) -> some View {
-        ZStack(alignment: .topTrailing) {
-            Image(systemName: systemImage)
-                .font(.system(size: 22, weight: .regular))
-                .foregroundStyle(PawPalTheme.primaryText)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-            if badge {
-                Circle()
-                    .fill(PawPalTheme.accent)
-                    .frame(width: 7, height: 7)
-                    .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
-                    .offset(x: 4, y: -4)
-            }
         }
     }
 
@@ -407,38 +768,56 @@ struct FeedView: View {
 /// real data rather than a separate "stories" backend.
 struct PetsStrip: View {
     let currentDisplayName: String
-    /// The signed-in user's own pets — rendered first, treated as "your story"
-    /// (no gradient ring, "+" badge overlay, "你的故事" label on the first one).
+    /// The signed-in user's own pets — rendered first. If a pet has an
+    /// active story the ring lights up + tap opens the viewer; otherwise
+    /// a "+" badge hints that tapping will compose a new story.
     let myPets: [RemotePet]
-    /// Pets belonging to people the user follows that have recent posts —
-    /// rendered after `myPets` with the standard gradient story ring.
+    /// Friends' pets with active stories. Rendered with the gradient
+    /// ring; friends without an active story don't appear here at all
+    /// (the rail is stories-only, not a general activity list).
     let followedPets: [RemotePet]
+    /// Active-story predicate — used to decide whether to draw the
+    /// gradient ring and whether a tap routes to viewer vs. composer.
+    var hasActiveStory: (UUID) -> Bool = { _ in false }
+    /// Tap handler for the user's own pet bubbles. Receives the tapped pet
+    /// and routes to composer (no story) or viewer (has story) upstream.
+    var onTapOwnPet: (RemotePet) -> Void = { _ in }
+    /// Tap handler for a friend's pet bubble — always opens the viewer.
+    var onTapFriendPet: (RemotePet) -> Void = { _ in }
     /// If non-nil, shows an "add pet" tile at the end of the rail.
     var onAddPet: (() -> Void)?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 14) {
-                // Your stories — own pets, no gradient ring, "+" overlay badge.
+                // Your stories — own pets. Ring + tap behaviour depend on
+                // whether that pet already has an active story.
                 ForEach(Array(myPets.enumerated()), id: \.element.id) { idx, pet in
-                    NavigationLink(value: pet) {
+                    Button {
+                        onTapOwnPet(pet)
+                    } label: {
                         PetStoryBubble(
                             pet: pet,
                             index: idx,
                             isOwnStory: true,
+                            hasActiveStory: hasActiveStory(pet.id),
                             label: idx == 0 ? "你的故事" : pet.name
                         )
                     }
                     .buttonStyle(.plain)
                 }
 
-                // Friends' stories — followed pets with recent posts, gradient ring.
+                // Friends' stories — only pets with active stories make it
+                // here (the caller filters), so every bubble gets the ring.
                 ForEach(Array(followedPets.enumerated()), id: \.element.id) { idx, pet in
-                    NavigationLink(value: pet) {
+                    Button {
+                        onTapFriendPet(pet)
+                    } label: {
                         PetStoryBubble(
                             pet: pet,
                             index: idx + myPets.count,
                             isOwnStory: false,
+                            hasActiveStory: true,
                             label: pet.name
                         )
                     }
@@ -480,30 +859,43 @@ struct PetsStrip: View {
 private struct PetStoryBubble: View {
     let pet: RemotePet
     let index: Int
-    /// If true, this is the signed-in user's pet — rendered with a hairline
-    /// ring and a "+" badge in the corner (Instagram "your story" pattern).
-    /// Otherwise renders with the conic gradient ring (a friend's story).
+    /// If true, this is the signed-in user's pet. Own bubbles with no
+    /// active story show a "+" badge (tap → composer); own bubbles with
+    /// a story show the gradient ring (tap → viewer). Friend bubbles
+    /// always have the ring since the caller filters non-story friends
+    /// out of the rail entirely.
     var isOwnStory: Bool = false
+    /// Whether this pet currently has an active (<24h) story. Drives the
+    /// ring colour for own bubbles — friends default to true because the
+    /// rail doesn't include friends without stories.
+    var hasActiveStory: Bool = false
     /// The text under the bubble. For own stories the first pet uses
     /// "你的故事"; everything else falls back to the pet's name.
     var label: String? = nil
 
+    /// Show the gradient "live story" ring when the pet has a story.
+    /// This is how the Instagram-style "unseen" affordance reads — a
+    /// hairline ring means "nothing new", gradient ring means "tap me".
+    private var showRing: Bool { hasActiveStory }
+
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
-                if isOwnStory {
-                    // "Your story" ring — quiet hairline so the + badge reads.
-                    Circle()
-                        .stroke(PawPalTheme.hairline, lineWidth: 1)
-                        .frame(width: 64, height: 64)
-                } else {
-                    // Friend's story — conic gradient outer, white inner gap.
+                if showRing {
+                    // Live story — conic gradient outer, white inner gap
+                    // so the avatar sits on its own disc (not on coloured
+                    // pixels).
                     Circle()
                         .fill(PawPalTheme.storyRingGradient)
                         .frame(width: 64, height: 64)
                     Circle()
                         .fill(Color.white)
                         .frame(width: 58, height: 58)
+                } else {
+                    // Quiet hairline — reads as "no new story yet".
+                    Circle()
+                        .stroke(PawPalTheme.hairline, lineWidth: 1)
+                        .frame(width: 64, height: 64)
                 }
 
                 // The actual avatar
@@ -514,9 +906,14 @@ private struct PetStoryBubble: View {
                     background: avatarBackground(for: index),
                     dogBreed: pet.species
                 )
+                // Key the AsyncImage identity on the stable URL so the
+                // loaded photo survives re-rendering of the rail (e.g.
+                // when StoryService reloads and flips the ring on).
+                .id(pet.avatar_url ?? pet.id.uuidString)
 
-                // Own-story "+" badge (bottom-right).
-                if isOwnStory {
+                // Own pet with no story yet → "+" badge so the tap
+                // affordance reads as "compose new story".
+                if isOwnStory && !hasActiveStory {
                     Circle()
                         .fill(PawPalTheme.accent)
                         .frame(width: 20, height: 20)
@@ -529,7 +926,7 @@ private struct PetStoryBubble: View {
                             Circle().stroke(Color.white, lineWidth: 2)
                         }
                         .offset(x: 22, y: 22)
-                } else {
+                } else if !isOwnStory {
                     // Friend bubble — small species-emoji badge in the
                     // bottom-right so the rail reads as pet-themed, not generic.
                     Circle()
@@ -659,7 +1056,6 @@ struct PostCard: View {
     @State private var followAnimating = false
     @State private var captionExpanded = false
     @State private var showDoubleTapHeart = false
-    @State private var saved = false
 
     private var isLiked: Bool {
         guard let uid = currentUserID else { return false }
@@ -804,6 +1200,11 @@ struct PostCard: View {
                 background: PawPalTheme.cardSoft,
                 dogBreed: post.pet?.species
             )
+            // Key the AsyncImage identity on the stable avatar URL so the
+            // loaded image is preserved across navigation pushes/pops
+            // (tapping into a post detail and coming back no longer
+            // flashes the illustrated placeholder).
+            .id(post.pet?.avatar_url ?? post.id.uuidString)
 
             VStack(alignment: .leading, spacing: 1) {
                 // Handle line — Instagram uses SF Pro Text semibold 14pt.
@@ -851,10 +1252,16 @@ struct PostCard: View {
 
     // MARK: - Caption
 
-    /// Best-effort handle for the inline-bold caption prefix. We don't join
-    /// owner profile into RemotePost yet, so for non-self posts we fall back
-    /// to the pet name (still gives the same Instagram-style visual rhythm).
+    /// Handle for the inline-bold caption prefix. Prefers the real owner
+    /// username now that PostsService joins `profiles!owner_user_id(*)`
+    /// into every non-minimal selectLevel. Falls back to the cached
+    /// currentUsername for own posts when the join is missing, then to
+    /// the pet name as a last resort.
     private var captionHandle: String {
+        if let handle = post.owner?.username?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !handle.isEmpty {
+            return handle
+        }
         if isOwnPost, let me = currentUsername?.trimmingCharacters(in: .whitespacesAndNewlines), !me.isEmpty {
             return me
         }
@@ -972,6 +1379,9 @@ struct PostCard: View {
                 imagePlaceholder(side: side)
             }
         }
+        // Same fix as the pet avatar — stable URL keys the AsyncImage
+        // identity so nav pops don't trigger a re-fetch.
+        .id(url.absoluteString)
     }
 
     private func imagePlaceholder(side: CGFloat, failed: Bool = false) -> some View {
@@ -987,8 +1397,10 @@ struct PostCard: View {
     // MARK: - Reactions (PawPal pill-style with inline counts)
     //
     // Like / comment / share sit inside warm cream pills with the count baked
-    // in. Bookmark is a round chip on the right. This replaces the Instagram
-    // "four floating glyphs + separate count line" pattern.
+    // in. This replaces the Instagram "four floating glyphs + separate count
+    // line" pattern. A bookmark chip lived here previously, but it was a
+    // local-only @State toggle with no persistence / no 我的收藏 screen, so
+    // it was removed until Phase 6 ships real saves.
 
     private var reactionRow: some View {
         HStack(spacing: 8) {
@@ -1069,24 +1481,6 @@ struct PostCard: View {
             .buttonStyle(.plain)
 
             Spacer(minLength: 0)
-
-            // Bookmark — circular chip on the right, separated from the action pills.
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    saved.toggle()
-                }
-            } label: {
-                Image(systemName: saved ? "bookmark.fill" : "bookmark")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(saved ? PawPalTheme.accent : PawPalTheme.primaryText)
-                    .frame(width: 32, height: 32)
-                    .background(
-                        Circle().fill(saved ? PawPalTheme.accentTint : PawPalTheme.cardSoft)
-                    )
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -1199,6 +1593,10 @@ private struct ImageCarousel: View {
                             carouselPlaceholder(failed: false)
                         }
                     }
+                    // Key the AsyncImage on the URL so swiping between
+                    // carousel slides — and nav pops back into the feed —
+                    // don't re-fetch an already-loaded photo.
+                    .id(url.absoluteString)
                     .tag(idx)
                 }
             }
@@ -1243,5 +1641,276 @@ private struct ImageCarousel: View {
                     ProgressView()
                 }
             }
+    }
+}
+
+// MARK: - Composer prefill payload
+
+/// Identifiable payload used by the `sheet(item:)` presentation for the
+/// milestone / memory composer. Every tap mints a new id so the sheet
+/// re-instantiates cleanly — without that, a second tap after dismiss
+/// could reuse a stale composer instance mid-animation.
+struct ComposerPrefill: Identifiable, Hashable {
+    let id = UUID()
+    let petID: UUID
+    let caption: String
+    /// Optional multi-pet attachment — used by the playdate post-prompt
+    /// so both the proposer and invitee pets can be tagged on the same
+    /// post. Callers pass either `petID` (single-pet case) OR
+    /// `pets` + `petID` (multi-pet — `petID` is the single-pet fallback
+    /// the existing composer consumes; honouring `pets` end-to-end is a
+    /// follow-up once the composer gains a multi-pet picker).
+    let pets: [UUID]?
+
+    init(petID: UUID, caption: String, pets: [UUID]? = nil) {
+        self.petID = petID
+        self.caption = caption
+        self.pets = pets
+    }
+}
+
+// MARK: - MilestoneTodayCard (today's birthdays — floating white card)
+
+/// Warm-accent card rendered above the stories rail whenever one or
+/// more of the user's pets has a birthday today. Tapping the CTA opens
+/// the composer pre-seeded with the pet + a celebratory caption. When
+/// multiple pets share a birthday, the card becomes a swipeable page
+/// view with a `1/N` counter baked into the eyebrow row.
+struct MilestoneTodayCard: View {
+    let milestones: [MilestonesService.Milestone]
+    let onTap: (MilestonesService.Milestone) -> Void
+
+    @State private var currentIndex: Int = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            eyebrowRow
+
+            if milestones.count == 1, let only = milestones.first {
+                milestoneContent(only)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 16)
+            } else {
+                TabView(selection: $currentIndex) {
+                    ForEach(Array(milestones.enumerated()), id: \.element.id) { idx, milestone in
+                        milestoneContent(milestone)
+                            .padding(.horizontal, 18)
+                            .padding(.bottom, 16)
+                            .tag(idx)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                // Height is content-driven by the inner layout's natural
+                // size; we only need to give the TabView something to fill.
+                .frame(minHeight: 120)
+            }
+        }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(PawPalTheme.accentGlow.opacity(0.55), lineWidth: 1)
+        )
+        .shadow(color: PawPalTheme.softShadow, radius: 12, y: 2)
+    }
+
+    private var eyebrowRow: some View {
+        HStack(spacing: 6) {
+            Text("🎂")
+                .font(.system(size: 13))
+            Text("今日纪念日")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(PawPalTheme.accent)
+                .tracking(0.3)
+            Spacer()
+            if milestones.count > 1 {
+                Text("\(currentIndex + 1)/\(milestones.count)")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PawPalTheme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(PawPalTheme.cardSoft, in: Capsule())
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+    }
+
+    private func milestoneContent(_ milestone: MilestonesService.Milestone) -> some View {
+        Button {
+            onTap(milestone)
+        } label: {
+            HStack(alignment: .center, spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(PawPalTheme.accentTint)
+                        .frame(width: 52, height: 52)
+                    Text("🎂")
+                        .font(.system(size: 26))
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(milestone.title)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text("点一下记录今天 ✨")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.accent)
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(PawPalTheme.accent)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: milestone.id)
+    }
+}
+
+// MARK: - MemoryTodayCard (N年前的今天 — floating white card)
+
+/// Softer companion to `MilestoneTodayCard`. Surfaces the user's own
+/// posts from prior years that share today's month-day, pre-seeding a
+/// nostalgic caption when tapped. Image thumbnail is the historic
+/// post's first image (if any). Swipeable when multiple memories land
+/// on the same day.
+struct MemoryTodayCard: View {
+    let memories: [MilestonesService.MemoryPost]
+    let onTap: (MilestonesService.MemoryPost) -> Void
+
+    @State private var currentIndex: Int = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            eyebrowRow
+
+            if memories.count == 1, let only = memories.first {
+                memoryContent(only)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 16)
+            } else {
+                TabView(selection: $currentIndex) {
+                    ForEach(Array(memories.enumerated()), id: \.element.id) { idx, memory in
+                        memoryContent(memory)
+                            .padding(.horizontal, 18)
+                            .padding(.bottom, 16)
+                            .tag(idx)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(minHeight: 130)
+            }
+        }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(PawPalTheme.hairline, lineWidth: 0.5)
+        )
+        .shadow(color: PawPalTheme.softShadow, radius: 12, y: 2)
+    }
+
+    private var currentEyebrow: String {
+        if memories.indices.contains(currentIndex) {
+            return memories[currentIndex].eyebrow
+        }
+        return memories.first?.eyebrow ?? ""
+    }
+
+    private var eyebrowRow: some View {
+        HStack(spacing: 6) {
+            Text("📷")
+                .font(.system(size: 13))
+            Text(currentEyebrow)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(PawPalTheme.secondaryText)
+                .tracking(0.3)
+            Spacer()
+            if memories.count > 1 {
+                Text("\(currentIndex + 1)/\(memories.count)")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PawPalTheme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(PawPalTheme.cardSoft, in: Capsule())
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+    }
+
+    private func memoryContent(_ memory: MilestonesService.MemoryPost) -> some View {
+        Button {
+            onTap(memory)
+        } label: {
+            HStack(alignment: .center, spacing: 14) {
+                memoryThumb(for: memory)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(memory.post.caption)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text("点一下记录今天 ✨")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.accent)
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(PawPalTheme.accent)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: memory.id)
+    }
+
+    /// Historic post's first image. Falls back to a cream tile with a
+    /// camera glyph when the post had no image (text-only memories).
+    @ViewBuilder
+    private func memoryThumb(for memory: MilestonesService.MemoryPost) -> some View {
+        if let url = memory.post.imageURLs.first {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                case .failure:
+                    fallbackThumb
+                default:
+                    PawPalTheme.cardSoft.overlay(ProgressView())
+                }
+            }
+            .frame(width: 60, height: 60)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else {
+            fallbackThumb
+                .frame(width: 60, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private var fallbackThumb: some View {
+        PawPalTheme.cardSoft.overlay(
+            Image(systemName: "photo")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(PawPalTheme.tertiaryText)
+        )
     }
 }

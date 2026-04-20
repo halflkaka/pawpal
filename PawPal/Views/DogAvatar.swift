@@ -12,7 +12,7 @@ struct DogAvatar: View {
     // MARK: Variants & accessories
 
     enum Variant: String, CaseIterable {
-        case golden, corgi, husky, shiba, beagle, poodle, pug
+        case golden, corgi, husky, shiba, beagle, poodle, pug, borderCollie, cavapoo, labrador, dalmatian
 
         /// Picks a sensible variant from a free-form breed string. Keeps both
         /// the English breed names (matching the prototype) and the Chinese
@@ -26,6 +26,16 @@ struct DogAvatar: View {
             if breed.contains("beagle") || breed.contains("比格") { return .beagle }
             if breed.contains("poodle") || breed.contains("贵宾") || breed.contains("泰迪") { return .poodle }
             if breed.contains("pug") || breed.contains("巴哥") || breed.contains("八哥") { return .pug }
+            // Border Collie — check before generic "collie" so rough collies
+            // still route here (closest visual match in our roster).
+            if breed.contains("border") || breed.contains("collie")
+                || breed.contains("边牧") || breed.contains("边境牧羊") || breed.contains("边境") { return .borderCollie }
+            if breed.contains("cavapoo") || breed.contains("卡瓦普") || breed.contains("卡瓦噗") || breed.contains("卡波") { return .cavapoo }
+            // "lab" is a short token — keep it here after more specific
+            // checks so e.g. "labradoodle" would match labrador first (fine,
+            // labrador is a closer coat match than poodle for most labradoodles).
+            if breed.contains("labrador") || breed.contains("lab") || breed.contains("拉布拉多") || breed.contains("拉拉") { return .labrador }
+            if breed.contains("dalmatian") || breed.contains("dalmation") || breed.contains("斑点") || breed.contains("达尔马提亚") { return .dalmatian }
             return .golden
         }
     }
@@ -153,6 +163,36 @@ struct DogAvatar: View {
                 ear:    Color(red: 0.227, green: 0.180, blue: 0.157),  // #3A2E28
                 muzzle: Color(red: 0.227, green: 0.180, blue: 0.157),
                 spot:   nil
+            )
+        case .borderCollie:
+            return Palette(
+                body:   Color(red: 0.122, green: 0.102, blue: 0.090),  // #1F1A17
+                ear:    Color(red: 0.122, green: 0.102, blue: 0.090),  // #1F1A17
+                muzzle: .white,                                        // #FFFFFF
+                spot:   .white                                         // #FFFFFF — forehead blaze
+            )
+        case .cavapoo:
+            return Palette(
+                body:   Color(red: 0.953, green: 0.851, blue: 0.706),  // #F3D9B4
+                ear:    Color(red: 0.898, green: 0.722, blue: 0.529),  // #E5B887
+                muzzle: Color(red: 0.984, green: 0.922, blue: 0.827),  // #FBEBD3
+                spot:   nil
+            )
+        case .labrador:
+            return Palette(
+                body:   Color(red: 0.929, green: 0.800, blue: 0.561),  // #EDCC8F
+                ear:    Color(red: 0.847, green: 0.698, blue: 0.412),  // #D8B269
+                muzzle: Color(red: 0.973, green: 0.918, blue: 0.780),  // #F8EAC7
+                spot:   nil
+            )
+        case .dalmatian:
+            // Body is very-pale-gray (not pure white) so the silhouette
+            // reads against the cream background — pure #FFFFFF blends in.
+            return Palette(
+                body:   Color(red: 0.961, green: 0.961, blue: 0.961),  // #F5F5F5
+                ear:    Color(red: 0.122, green: 0.102, blue: 0.090),  // #1F1A17
+                muzzle: Color(red: 0.965, green: 0.965, blue: 0.965),  // #F6F6F6
+                spot:   Color(red: 0.122, green: 0.102, blue: 0.090)   // #1F1A17
             )
         }
     }
@@ -309,6 +349,12 @@ private struct SleepyEye: Shape {
             DogAvatar(variant: .poodle, size: 72, accessory: .hat)
             DogAvatar(variant: .pug, size: 72, expression: .sleepy)
             DogAvatar(variant: .golden, size: 72, expression: .sleepy)
+        }
+        HStack(spacing: 16) {
+            DogAvatar(variant: .borderCollie, size: 72)
+            DogAvatar(variant: .cavapoo, size: 72, accessory: .bow)
+            DogAvatar(variant: .labrador, size: 72)
+            DogAvatar(variant: .dalmatian, size: 72)
         }
     }
     .padding()
