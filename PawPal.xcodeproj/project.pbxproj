@@ -445,7 +445,9 @@
 				INFOPLIST_FILE = PawPal/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "";
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
+				INFOPLIST_KEY_NSCameraUsageDescription = "PawPal uses the camera to let you capture 24-hour pet stories.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "This app uses your location to find nearby veterinary clinics.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "PawPal needs access to your photo library to pick photos for posts and stories.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -476,7 +478,9 @@
 				INFOPLIST_FILE = PawPal/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "";
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
+				INFOPLIST_KEY_NSCameraUsageDescription = "PawPal uses the camera to let you capture 24-hour pet stories.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "This app uses your location to find nearby veterinary clinics.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "PawPal needs access to your photo library to pick photos for posts and stories.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

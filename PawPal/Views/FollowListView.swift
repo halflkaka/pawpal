@@ -61,8 +61,16 @@ struct FollowListView: View {
     @State private var mode: Mode
 
     @StateObject private var followService = FollowService()
+    /// Shared with the rest of the app so a featured-pet lookup here
+    /// benefits from the same cached write policy (e.g. `updatePetAvatar`
+    /// in `PetProfileView` reflects here on return) without a re-fetch.
+    @ObservedObject private var petsService = PetsService.shared
     @State private var followingProfiles: [RemoteProfile] = []
     @State private var followerProfiles: [RemoteProfile] = []
+    /// Pet-first pass (P0 #3): each row renders the user's first pet as
+    /// a small corner badge on the avatar. Keyed by owner user id.
+    /// Falls back to no badge when the user has no pets yet.
+    @State private var featuredPets: [UUID: RemotePet] = [:]
     @State private var isLoading = false
     /// Tracks whether the initial parallel preload has finished. We
     /// preload both lists up front so that flipping between 关注 / 粉丝
@@ -224,18 +232,74 @@ struct FollowListView: View {
     @ViewBuilder
     private func avatar(for profile: RemoteProfile) -> some View {
         let size: CGFloat = 48
-        if let urlString = profile.avatar_url,
-           let url = URL(string: urlString) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image): image.resizable().scaledToFill()
-                default: initial(for: profile, size: size)
+        Group {
+            if let urlString = profile.avatar_url,
+               let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image): image.resizable().scaledToFill()
+                    default: initial(for: profile, size: size)
+                    }
                 }
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+            } else {
+                initial(for: profile, size: size)
             }
-            .frame(width: size, height: size)
-            .clipShape(Circle())
-        } else {
-            initial(for: profile, size: size)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if let pet = featuredPets[profile.id] {
+                petBadge(for: pet)
+                    .offset(x: 3, y: 3)
+            }
+        }
+    }
+
+    /// Small featured-pet badge anchored to the bottom-right of the
+    /// user avatar. Shows the pet's photo when available, otherwise a
+    /// species emoji on a cardSoft fill. A white ring keeps the badge
+    /// legible against both light and photo-heavy avatar backgrounds.
+    @ViewBuilder
+    private func petBadge(for pet: RemotePet) -> some View {
+        let badge: CGFloat = 22
+        ZStack {
+            if let urlStr = pet.avatar_url, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    default:
+                        petBadgeFallback(for: pet)
+                    }
+                }
+                .frame(width: badge, height: badge)
+                .clipShape(Circle())
+            } else {
+                petBadgeFallback(for: pet)
+                    .frame(width: badge, height: badge)
+            }
+        }
+        .overlay(Circle().stroke(Color.white, lineWidth: 2))
+    }
+
+    @ViewBuilder
+    private func petBadgeFallback(for pet: RemotePet) -> some View {
+        ZStack {
+            Circle().fill(PawPalTheme.cardSoft)
+            Text(speciesEmoji(for: pet.species ?? ""))
+                .font(.system(size: 12))
+        }
+    }
+
+    private func speciesEmoji(for species: String) -> String {
+        switch species.lowercased() {
+        case "dog":             return "🐶"
+        case "cat":             return "🐱"
+        case "rabbit", "bunny": return "🐰"
+        case "bird":            return "🦜"
+        case "fish":            return "🐟"
+        case "hamster":         return "🐹"
+        default:                return "🐾"
         }
     }
 
@@ -298,6 +362,12 @@ struct FollowListView: View {
         followerProfiles = fws
         isLoading = false
         hasPreloaded = true
+        // Pet-first pass: fan-out one batched query for every user in
+        // either list so the row avatars can render a featured-pet
+        // badge in the bottom-right corner. Runs after the profile
+        // lists resolve so we know the full set of owner IDs.
+        let allIDs = Array(Set(fwg.map(\.id) + fws.map(\.id)))
+        featuredPets = await petsService.loadFeaturedPets(for: allIDs)
     }
 
     /// Refresh path invoked by pull-to-refresh. Only reloads the

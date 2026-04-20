@@ -72,6 +72,29 @@ struct PetProfileView: View {
     @State private var pendingChatThread: ChatThread?
     @State private var chatErrorMessage: String?
 
+    // Milestones MVP — horizontal rail of upcoming birthdays shown
+    // between the stats card and the posts grid. Derived; no cache.
+    // `composerPrefill` drives the sheet presented when the "today"
+    // chip is tapped (future chips are inert per spec).
+    private let milestonesService = MilestonesService()
+    @State private var upcomingMilestones: [MilestonesService.Milestone] = []
+    @State private var composerPrefill: ComposerPrefill?
+
+    // Playdates MVP — 约遛弯 affordance wiring. The pill is gated on
+    // `canProposePlaydate` (viewer is signed in, has pets, is not the
+    // owner, and this pet is `open_to_playdates == true`). Tapping
+    // checks the per-device "safety primer seen" flag: if unset, the
+    // interstitial sheet presents first and flips the flag on 知道了;
+    // either way the composer follows.
+    @State private var showingSafetyInterstitial: Bool = false
+    @State private var playdateComposerTarget: PlaydateComposerTarget?
+
+    /// Populated by the composer's `onSent` callback so the nav stack
+    /// pushes `PlaydateDetailView` right after a successful propose.
+    /// Without this, the composer just dismisses silently and the user
+    /// has no visible confirmation that the invite was sent.
+    @State private var pendingPlaydateDetail: RemotePlaydate?
+
     init(
         pet: RemotePet,
         currentUserID: UUID? = nil,
@@ -95,6 +118,20 @@ struct PetProfileView: View {
         return pet.owner_user_id == currentUserID
     }
 
+    /// Whether to show the 约遛弯 pill. Four conditions per spec §5.8:
+    /// viewer is signed in, viewer isn't the owner, the pet has opted
+    /// into playdates, and the viewer has at least one pet of their
+    /// own to propose with. The server-side BEFORE INSERT trigger also
+    /// enforces the opt-in gate — this is the first line of defence.
+    private var canProposePlaydate: Bool {
+        guard let viewerID = currentUserID,
+              viewerID != pet.owner_user_id,
+              pet.open_to_playdates == true,
+              !PetsService.shared.pets.isEmpty
+        else { return false }
+        return true
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -107,6 +144,11 @@ struct PetProfileView: View {
         .background(PawPalBackground())
         .navigationTitle(pet.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                shareButton
+            }
+        }
         .navigationDestination(for: RemotePost.self) { post in
             PostDetailView(
                 post: post,
@@ -115,6 +157,19 @@ struct PetProfileView: View {
                 currentUserDisplayName: currentUserDisplayName,
                 currentUsername: currentUsername,
                 postsService: postsService,
+                authManager: authManager
+            )
+        }
+        // Cohort surface — reached by tapping the breed / city pills in
+        // the header. `Kind` is `Hashable` so the enum flows through a
+        // single `navigationDestination` call without per-case plumbing.
+        .navigationDestination(for: PetCohortView.Kind.self) { kind in
+            PetCohortView(
+                kind: kind,
+                excludingOwnerID: currentUserID,
+                currentUserID: currentUserID,
+                currentUserDisplayName: currentUserDisplayName,
+                currentUsername: currentUsername,
                 authManager: authManager
             )
         }
@@ -136,11 +191,13 @@ struct PetProfileView: View {
             await postsService.loadPetPosts(for: pet.id)
             await loadEngagementCounts()
             await refreshPetIfNeeded()
+            recomputeUpcomingMilestones()
         }
         .task {
             await postsService.loadPetPosts(for: pet.id)
             await loadEngagementCounts()
             await refreshPetIfNeeded()
+            recomputeUpcomingMilestones()
             await recordVisitIfNeeded()
         }
         .onChange(of: pickedAvatarItem) { _, item in
@@ -153,6 +210,154 @@ struct PetProfileView: View {
             // 3× then immediately navigates away would lose those taps.
             flushPendingBoops()
         }
+        // Composer sheet driven by a tap on the "today" milestone chip.
+        // Mirrors FeedView's wiring — identifiable prefill keys the sheet
+        // so rapid re-taps always spawn a fresh composer.
+        .sheet(item: $composerPrefill) { prefill in
+            if let authManager {
+                NavigationStack {
+                    CreatePostView(
+                        authManager: authManager,
+                        onPostPublished: { composerPrefill = nil },
+                        prefillCaption: prefill.caption,
+                        prefillPetID: prefill.petID
+                    )
+                }
+            }
+        }
+        // First-time safety primer — shown once per device before the
+        // playdate composer. `onContinue` flips the UserDefaults flag
+        // and opens the composer, so the flow is one tap interstitial
+        // → one tap composer rather than a stacked-sheet chain.
+        .sheet(isPresented: $showingSafetyInterstitial) {
+            PlaydateSafetyInterstitialView(onContinue: {
+                UserDefaults.standard.set(true, forKey: "pawpal.playdate.safety.seen")
+                showingSafetyInterstitial = false
+                presentPlaydateComposer()
+            })
+        }
+        // Composer sheet — separate `@State` from the interstitial so
+        // the two sheets never fight over presentation order. A
+        // per-opening UUID on the target means rapid re-taps re-instantiate
+        // the composer (same trick as `ComposerPrefill`).
+        .sheet(item: $playdateComposerTarget) { target in
+            PlaydateComposerSheet(
+                inviteePet: target.inviteePet,
+                inviteeUserID: target.inviteeUserID,
+                proposerPetOptions: target.proposerPetOptions,
+                onSent: { created in
+                    // Dismiss the composer first, then push the detail
+                    // view on the next RunLoop tick so the sheet
+                    // dismissal animation doesn't fight the nav push.
+                    playdateComposerTarget = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        pendingPlaydateDetail = created
+                    }
+                }
+            )
+        }
+        // Push `PlaydateDetailView` after a successful propose so the
+        // user sees what they just scheduled and has access to the
+        // Cancel button. Mirrors `FeedView`'s `navigatingPlaydate`
+        // pattern.
+        .navigationDestination(item: $pendingPlaydateDetail) { playdate in
+            PlaydateDetailView(
+                playdate: playdate,
+                proposerPet: petsService.pets.first(where: { $0.id == playdate.proposer_pet_id }),
+                inviteePet: pet.id == playdate.invitee_pet_id
+                    ? pet
+                    : petsService.pets.first(where: { $0.id == playdate.invitee_pet_id }),
+                currentUserID: currentUserID,
+                authManager: authManager
+            )
+        }
+    }
+
+    // MARK: - Share
+
+    /// External share-out affordance pinned to the nav bar's trailing
+    /// edge. Emits `pawpal://pet/<uuid>` via `ShareLinkBuilder`, which
+    /// round-trips through `DeepLinkRouter` on devices with the app
+    /// installed. Matches the icon chip styling used by
+    /// `ProfileView.headerActionRow` so the share control reads the
+    /// same across every profile surface.
+    private var shareButton: some View {
+        ShareLink(
+            item: ShareLinkBuilder.petURL(petID: pet.id),
+            message: Text(ShareLinkBuilder.petShareMessage(petName: pet.name))
+        ) {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(PawPalTheme.primaryText)
+                .frame(width: 36, height: 36)
+                .background(Color.white.opacity(0.9), in: Circle())
+                .overlay(Circle().stroke(PawPalTheme.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            // Instrumentation: share-tap viral-loop signal. `surface`
+            // is the share origin — here the pet profile page.
+            AnalyticsService.shared.log(.shareTap, properties: ["surface": "pet"])
+        })
+    }
+
+    // MARK: - 约遛弯 affordance
+
+    /// Warm-accent pill button rendered alongside 发消息 when the
+    /// invitee pet is opted in. Tap flow:
+    ///   1. unseen safety primer → `showingSafetyInterstitial = true`
+    ///   2. seen safety primer → open composer directly
+    private var playdateProposeButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            let seen = UserDefaults.standard.bool(forKey: "pawpal.playdate.safety.seen")
+            if seen {
+                presentPlaydateComposer()
+            } else {
+                showingSafetyInterstitial = true
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "pawprint.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("约遛弯")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                LinearGradient(
+                    colors: [PawPalTheme.accent, PawPalTheme.accentSoft],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                in: Capsule(style: .continuous)
+            )
+            .shadow(color: PawPalTheme.accent.opacity(0.35), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func presentPlaydateComposer() {
+        guard let viewerID = currentUserID else { return }
+        // `inviteeUserID` is the pet's owner — the playdate row carries
+        // both the pet ids and the denormalised user ids for RLS, so
+        // both need to be plumbed through.
+        _ = viewerID
+        let options = PetsService.shared.pets
+        playdateComposerTarget = PlaydateComposerTarget(
+            inviteePet: pet,
+            inviteeUserID: pet.owner_user_id,
+            proposerPetOptions: options
+        )
+    }
+
+    /// Rebuild the upcoming-birthdays rail off the currently loaded
+    /// `pet`. Pure function — safe to call from sync contexts.
+    private func recomputeUpcomingMilestones() {
+        upcomingMilestones = milestonesService.upcomingMilestones(forPet: pet, limit: 3)
     }
 
     // MARK: - Avatar
@@ -270,12 +475,21 @@ struct PetProfileView: View {
             // pet; unauthenticated callers (PostDetailView path without
             // an authManager) don't get the affordance either because
             // `ChatDetailView` requires the binding.
+            //
+            // The 约遛弯 pill sits next to 发消息 when the invitee pet is
+            // opted in (see `canProposePlaydate`). Centered HStack so
+            // the pair reads as a single row of affordances.
             if !canEdit,
                currentUserID != nil,
                authManager != nil,
                pet.owner_user_id != currentUserID {
-                messageOwnerButton
-                    .frame(maxWidth: .infinity, alignment: .center)
+                HStack(spacing: 10) {
+                    messageOwnerButton
+                    if canProposePlaydate {
+                        playdateProposeButton
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
 
             if let chatErrorMessage {
@@ -285,14 +499,19 @@ struct PetProfileView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
             }
 
-            // Tag pills
+            // Tag pills — breed is tappable (→ PetCohortView(.breed))
+            // when non-empty; the other pills stay inert because they
+            // aren't cohort axes. The chevron on the breed pill signals
+            // the affordance; age / sex / weight keep their original
+            // static PawPalPill styling.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     if let species = pet.species, !species.isEmpty {
                         PawPalPill(text: speciesDisplayName(species), systemImage: "pawprint.fill", tint: PawPalTheme.orange)
                     }
-                    if let breed = pet.breed, !breed.isEmpty {
-                        PawPalPill(text: breed, systemImage: nil, tint: PawPalTheme.secondaryText)
+                    if let breed = pet.breed?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !breed.isEmpty {
+                        breedCohortPill(breed: breed)
                     }
                     if let age = pet.age, !age.isEmpty {
                         PawPalPill(text: withUnit(age, defaultUnit: "岁"), systemImage: "calendar", tint: PawPalTheme.tertiaryText)
@@ -306,15 +525,12 @@ struct PetProfileView: View {
                 }
             }
 
-            // City
-            if let city = pet.home_city, !city.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "location.fill")
-                        .font(.system(size: 11))
-                    Text(city)
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundStyle(PawPalTheme.tertiaryText)
+            // City — tappable (→ PetCohortView(.city)) when non-empty.
+            // Chevron mirrors the breed pill's affordance so the two
+            // cohort entry points read the same.
+            if let city = pet.home_city?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !city.isEmpty {
+                cityCohortPill(city: city)
             }
 
             // Bio
@@ -379,6 +595,10 @@ struct PetProfileView: View {
                 externalHunger: displayHunger,
                 externalEnergy: displayEnergy,
                 onAccessoryChanged: canEdit ? persistAccessory : nil,
+                // Only the owner sees the 🎀/🎩/👓 chips. Visitors still
+                // see whatever accessory the owner picked, they just
+                // can't change it.
+                canEdit: canEdit,
                 onBoop: virtualPetBoopHandler,
                 // Only the owner can mutate `pet_state` (RLS enforces it
                 // server-side). Passing nil for visitors means their
@@ -417,10 +637,77 @@ struct PetProfileView: View {
             }
             .padding(.vertical, 12)
             .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            // Upcoming birthdays rail — hidden when the pet has no birthday.
+            // "Today" chip is live (tap → composer); future chips are
+            // inert so the rail reads as a timeline preview, not a menu.
+            if !upcomingMilestones.isEmpty {
+                UpcomingMilestonesRail(
+                    milestones: upcomingMilestones,
+                    onTapToday: { milestone in
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        print("[Milestone] upcoming birthday tapped \(milestone.id)")
+                        composerPrefill = ComposerPrefill(
+                            petID: milestone.pet.id,
+                            caption: milestone.prefillCaption
+                        )
+                    }
+                )
+            }
         }
         .padding(.horizontal, 20)
         .padding(.top, 24)
         .padding(.bottom, 28)
+    }
+
+    // MARK: - Cohort entry points (breed / city)
+
+    /// Tappable breed pill → pushes `PetCohortView(.breed(breed))`.
+    /// Visually mirrors the static `PawPalPill(tint: secondaryText)`
+    /// the pet profile rendered before, with a trailing chevron as the
+    /// affordance hint. Haptic + navigation are wired via
+    /// `NavigationLink` + `simultaneousGesture` so the link push still
+    /// fires reliably when the user taps through the chevron glyph.
+    private func breedCohortPill(breed: String) -> some View {
+        NavigationLink(value: PetCohortView.Kind.breed(breed)) {
+            HStack(spacing: 6) {
+                Text(breed)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(PawPalTheme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(PawPalTheme.secondaryText.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        })
+    }
+
+    /// Tappable city row → pushes `PetCohortView(.city(city))`. Keeps
+    /// the original "location pin + city name" visual (tertiary text)
+    /// and appends a chevron so the row reads as tappable without
+    /// shouting.
+    private func cityCohortPill(city: String) -> some View {
+        NavigationLink(value: PetCohortView.Kind.city(city)) {
+            HStack(spacing: 4) {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 11))
+                Text(city)
+                    .font(.system(size: 13, weight: .semibold))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(PawPalTheme.tertiaryText)
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        })
     }
 
     // MARK: - Chat entry point
@@ -985,5 +1272,139 @@ struct PetProfileView: View {
         case "fish": return "鱼类"
         default: return species
         }
+    }
+}
+
+// MARK: - UpcomingMilestonesRail
+
+/// Horizontal rail of chips previewing upcoming birthdays for the
+/// current pet. The "today" chip is accent-filled and tappable (opens
+/// the composer via the parent); future chips are muted and inert —
+/// the rail reads as a timeline preview, not a menu.
+struct UpcomingMilestonesRail: View {
+    let milestones: [MilestonesService.Milestone]
+    let onTapToday: (MilestonesService.Milestone) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("🎂")
+                    .font(.system(size: 13))
+                Text("即将到来的纪念日")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(PawPalTheme.secondaryText)
+                    .tracking(0.3)
+                Spacer()
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(milestones) { milestone in
+                        UpcomingMilestoneChip(
+                            milestone: milestone,
+                            onTap: { onTapToday(milestone) }
+                        )
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+}
+
+// MARK: - UpcomingMilestoneChip
+
+/// Single chip in the upcoming-birthdays rail. Today → warm accent fill
+/// with a subtle shadow and tappable surface. Future → white with a
+/// hairline border; tap is disabled so the chip reads as a preview.
+struct UpcomingMilestoneChip: View {
+    let milestone: MilestonesService.Milestone
+    let onTap: () -> Void
+
+    private var isToday: Bool {
+        Calendar.current.isDateInToday(milestone.date)
+    }
+
+    private var isTomorrow: Bool {
+        Calendar.current.isDateInTomorrow(milestone.date)
+    }
+
+    /// Days between today (start-of-day) and the milestone date. Used
+    /// to produce "还有N天" for milestones ≤ a week out; beyond that
+    /// we fall back to an absolute "M月d日" label.
+    private var daysAway: Int {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: Date())
+        let target = cal.startOfDay(for: milestone.date)
+        return cal.dateComponents([.day], from: start, to: target).day ?? 0
+    }
+
+    private var subtitle: String {
+        if isToday { return "今天" }
+        if isTomorrow { return "明天" }
+        if daysAway > 0 && daysAway <= 7 { return "还有\(daysAway)天" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_Hans_CN")
+        f.dateFormat = "M月d日"
+        return f.string(from: milestone.date)
+    }
+
+    private var primaryLine: String {
+        switch milestone.kind {
+        case .birthday(let years):
+            return "\(years) 岁生日"
+        }
+    }
+
+    var body: some View {
+        Group {
+            if isToday {
+                Button(action: onTap) { chipBody }
+                    .buttonStyle(.plain)
+            } else {
+                chipBody
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isToday)
+    }
+
+    private var chipBody: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(isToday ? Color.white.opacity(0.85) : PawPalTheme.accentTint)
+                    .frame(width: 34, height: 34)
+                Text("🎂")
+                    .font(.system(size: 17))
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(subtitle)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(
+                        isToday ? Color.white.opacity(0.9) : PawPalTheme.secondaryText
+                    )
+                    .tracking(0.3)
+                Text(primaryLine)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(isToday ? .white : PawPalTheme.primaryText)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isToday ? AnyShapeStyle(PawPalTheme.accent) : AnyShapeStyle(PawPalTheme.subtleSurface))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(isToday ? PawPalTheme.accent : PawPalTheme.hairline, lineWidth: isToday ? 0 : 0.5)
+        )
+        .shadow(
+            color: isToday ? PawPalTheme.accent.opacity(0.30) : PawPalTheme.softShadow,
+            radius: isToday ? 10 : 4,
+            y: isToday ? 3 : 1
+        )
     }
 }

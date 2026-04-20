@@ -62,6 +62,11 @@ struct PostDetailView: View {
         }
         .background(PawPalBackground())
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                shareButton
+            }
+        }
         .task { await loadComments() }
         .navigationDestination(for: RemotePet.self) { pet in
             PetProfileView(
@@ -95,6 +100,37 @@ struct PostDetailView: View {
             reactionRow
         }
         .padding(16)
+    }
+
+    // MARK: - Share
+
+    /// External share-out affordance pinned to the nav bar's trailing
+    /// edge. Emits `pawpal://post/<uuid>` via `ShareLinkBuilder`, which
+    /// round-trips through `DeepLinkRouter` on devices with the app
+    /// installed and appears as plain text in WeChat / 小红书 / Messages
+    /// / etc. otherwise. Styling mirrors the `分享主页` chip on
+    /// `ProfileView.headerActionRow` so the two share affordances read
+    /// as the same control across screens.
+    private var shareButton: some View {
+        ShareLink(
+            item: ShareLinkBuilder.postURL(postID: post.id),
+            message: Text(ShareLinkBuilder.postShareMessage(petName: post.pet?.name))
+        ) {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(PawPalTheme.primaryText)
+                .frame(width: 36, height: 36)
+                .background(Color.white.opacity(0.9), in: Circle())
+                .overlay(Circle().stroke(PawPalTheme.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            // Instrumentation: share-tap viral-loop signal. The
+            // `surface` dimension lets us compare post-level vs
+            // pet-level vs profile-level sharing.
+            AnalyticsService.shared.log(.shareTap, properties: ["surface": "post"])
+        })
     }
 
     // MARK: - Header

@@ -15,6 +15,10 @@ struct ProfileView: View {
     /// feed/pet/play stat bumps (migration 015). See
     /// `VirtualPetStateStore` for the full rationale.
     @ObservedObject private var petStateStore = VirtualPetStateStore.shared
+    /// Used to derive the pending-invite badge next to "我的约玩". The
+    /// same cache drives FeedView's pinned request cards, so the badge
+    /// and the feed card stay in lock-step (accept one → both disappear).
+    @ObservedObject private var playdateService = PlaydateService.shared
     @State private var showingAddPet = false
     @State private var editingPet: RemotePet?
     @State private var showingEditAccount = false
@@ -49,6 +53,11 @@ struct ProfileView: View {
         let mode: FollowListView.Mode
     }
 
+    /// Navigation marker for the "我的约玩" row. Hashable singleton so a
+    /// plain `NavigationLink(value:)` can hop into `PlaydatesListView`
+    /// through `.navigationDestination(for:)` on the parent stack.
+    struct MyPlaydatesDestination: Hashable {}
+
     private let profileService = ProfileService()
 
     private var activePet: RemotePet? {
@@ -65,6 +74,7 @@ struct ProfileView: View {
                 softDivider
                 petsBand
                 highlightsStrip
+                myPlaydatesRow
                 if activePet != nil {
                     softDivider
                     featuredPetSection
@@ -130,6 +140,12 @@ struct ProfileView: View {
                 initialMode: dest.mode
             )
         }
+        // "我的约玩" push — separate value type so the list can be
+        // surfaced from any tap-through on the profile without fighting
+        // the pet / post destinations above.
+        .navigationDestination(for: MyPlaydatesDestination.self) { _ in
+            PlaydatesListView(currentUserID: user.id, authManager: authManager)
+        }
         .task { await loadAll() }
         .refreshable { await loadAll() }
         .sheet(isPresented: $showingAddPet, onDismiss: { statusMessage = nil }) {
@@ -138,16 +154,29 @@ struct ProfileView: View {
                 pet: nil,
                 isSaving: isSavingPet,
                 errorMessage: petsService.errorMessage
-            ) { name, species, breed, sex, age, weight, homeCity, bio, avatarData in
+            ) { name, species, breed, sex, age, weight, homeCity, bio, birthday, openToPlaydates, avatarData in
                 guard !isSavingPet else { return false }
                 isSavingPet = true
                 defer { isSavingPet = false }
                 let saved = await petsService.addPet(
                     for: user.id, name: name, species: species,
                     breed: breed, sex: sex, age: age, weight: weight,
-                    homeCity: homeCity, bio: bio, avatarData: avatarData
+                    homeCity: homeCity, bio: bio,
+                    birthday: birthday, avatarData: avatarData
                 )
-                if saved != nil {
+                if let saved {
+                    // Persist the user's playdate toggle choice through
+                    // the same code path the edit sheet uses. As of
+                    // 2026-04-19 the DB default is `true`, so we only
+                    // need to round-trip when the user explicitly
+                    // toggled OFF during creation; the ON case is a
+                    // no-op because the INSERT already wrote `true` via
+                    // the column default.
+                    if !openToPlaydates {
+                        var patched = saved
+                        patched.open_to_playdates = false
+                        await petsService.updatePet(patched, for: user.id, avatarData: nil)
+                    }
                     if activePetID.isEmpty {
                         activePetID = petsService.pets.first?.id.uuidString ?? ""
                     }
@@ -163,7 +192,7 @@ struct ProfileView: View {
                 pet: pet,
                 isSaving: isSavingPet,
                 errorMessage: petsService.errorMessage
-            ) { name, species, breed, sex, age, weight, homeCity, bio, avatarData in
+            ) { name, species, breed, sex, age, weight, homeCity, bio, birthday, openToPlaydates, avatarData in
                 guard !isSavingPet else { return false }
                 isSavingPet = true
                 defer { isSavingPet = false }
@@ -171,6 +200,8 @@ struct ProfileView: View {
                 updated.name = name; updated.species = species; updated.breed = breed
                 updated.sex = sex; updated.age = age; updated.weight = weight
                 updated.home_city = homeCity; updated.bio = bio
+                updated.birthday = birthday
+                updated.open_to_playdates = openToPlaydates
                 await petsService.updatePet(updated, for: user.id, avatarData: avatarData)
                 if petsService.errorMessage == nil {
                     statusMessage = "已更新宠物"
@@ -256,36 +287,30 @@ struct ProfileView: View {
 
     // MARK: - Profile header
 
+    /// The featured pet for the hero block. Prefers the first pet in the
+    /// user's list (ordered by created_at desc per `loadPets`, so "first"
+    /// is the most recently added). There's no `featured_pet_id` on
+    /// `profiles` yet — if/when that lands this helper is the single
+    /// place to resolve it. Nil when the user has no pets yet, which
+    /// routes the header into the add-your-first-pet CTA.
+    private var featuredHeroPet: RemotePet? {
+        petsService.pets.first
+    }
+
     private var profileHeader: some View {
         VStack(spacing: 14) {
-            // Compact user row — pet-first design means the human account
-            // takes a single horizontal slot instead of the full-width hero.
-            HStack(spacing: 14) {
-                userAvatar(size: 56)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(accountDisplayName)
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundStyle(PawPalTheme.primaryText)
-                        .lineLimit(1)
-
-                    HStack(spacing: 6) {
-                        Text(profileHandle.isEmpty ? (user.email ?? "") : profileHandle)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        Text("·")
-                            .foregroundStyle(.secondary)
-                        Text("宠物家长")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(PawPalTheme.secondaryText)
-                        Image(systemName: "heart.fill")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(PawPalTheme.red.opacity(0.8))
-                    }
-                }
-
-                Spacer()
+            // Pet-first hero block. When the user has at least one pet,
+            // the top of the profile leads with the featured pet (large
+            // avatar + pet name + species/breed pills), with the human
+            // identity rendered as a secondary @handle line below. When
+            // the user has no pets yet, the whole card becomes an
+            // "添加第一只宠物" CTA that opens the same editor as the `+`
+            // button on the pets rail — so new accounts have an obvious,
+            // single next step from their own profile.
+            if let pet = featuredHeroPet {
+                petHeroRow(pet)
+            } else {
+                addFirstPetHeroCard
             }
 
             // Bio / "about me" line. Surfaces the user's bio if set; otherwise
@@ -331,6 +356,186 @@ struct ProfileView: View {
         .padding(.horizontal, 20)
         .padding(.top, 16)
         .padding(.bottom, 18)
+    }
+
+    // MARK: - Pet-first hero row
+
+    /// Hero block that leads the Me profile when the user has at least
+    /// one pet. Pet avatar (72pt) on the left, pet name + species/breed
+    /// pill row + owner @handle stacked on the right. The human identity
+    /// is intentionally demoted to a small caption line at the bottom
+    /// so the pet reads as the protagonist of the screen (see
+    /// product.md §Core principles).
+    private func petHeroRow(_ pet: RemotePet) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            petHeroAvatar(pet)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(pet.name)
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PawPalTheme.primaryText)
+                    .lineLimit(1)
+
+                // Species + breed + (optional) city as a single wrapping
+                // pill row. Keeps the hero compact regardless of how much
+                // metadata the pet has filled in — if there's only a
+                // species the row renders a single pill, no awkward gaps.
+                petHeroMetaPills(pet)
+
+                // Owner's @handle (or display name / email fallback) as
+                // the demoted secondary line. Small, muted, anchored to
+                // the bottom so the hierarchy reads pet-first-human-second
+                // at a glance.
+                Text(ownerSecondaryLine)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(PawPalTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// 72pt avatar ring for the hero pet. Uses the pet's photo when set,
+    /// otherwise falls back to the same breed-aware DogAvatar / species
+    /// glyph used by the pets rail so the hero never renders as a blank
+    /// circle.
+    @ViewBuilder
+    private func petHeroAvatar(_ pet: RemotePet) -> some View {
+        let size: CGFloat = 72
+        let isDog = (pet.species ?? "").lowercased() == "dog"
+        ZStack {
+            Circle()
+                .stroke(PawPalTheme.accent.opacity(0.25), lineWidth: 2)
+                .frame(width: size, height: size)
+            if let urlStr = pet.avatar_url, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let img) = phase {
+                        img.resizable().scaledToFill()
+                            .frame(width: size - 6, height: size - 6)
+                            .clipShape(Circle())
+                    } else if isDog {
+                        DogAvatar(
+                            variant: DogAvatar.Variant.from(breed: pet.breed),
+                            size: size - 6,
+                            background: Color(red: 1.00, green: 0.953, blue: 0.902)
+                        )
+                    } else {
+                        Image(systemName: iconName(for: pet.species ?? ""))
+                            .font(.system(size: 30, weight: .medium))
+                            .foregroundStyle(PawPalTheme.accent)
+                            .frame(width: size - 6, height: size - 6)
+                            .background(PawPalTheme.cardSoft, in: Circle())
+                    }
+                }
+            } else if isDog {
+                DogAvatar(
+                    variant: DogAvatar.Variant.from(breed: pet.breed),
+                    size: size - 6,
+                    background: Color(red: 1.00, green: 0.953, blue: 0.902)
+                )
+            } else {
+                Image(systemName: iconName(for: pet.species ?? ""))
+                    .font(.system(size: 30, weight: .medium))
+                    .foregroundStyle(PawPalTheme.accent)
+                    .frame(width: size - 6, height: size - 6)
+                    .background(PawPalTheme.cardSoft, in: Circle())
+            }
+        }
+        .frame(width: size, height: size)
+        .shadow(color: PawPalTheme.softShadow, radius: 10, y: 4)
+    }
+
+    /// Species + breed + city as a wrapping pill row. Empty fields are
+    /// skipped so a sparsely-filled pet still renders cleanly.
+    @ViewBuilder
+    private func petHeroMetaPills(_ pet: RemotePet) -> some View {
+        HStack(spacing: 6) {
+            if let species = pet.species, !species.isEmpty {
+                PawPalPill(
+                    text: heroSpeciesDisplayName(species),
+                    systemImage: "pawprint.fill",
+                    tint: PawPalTheme.orange
+                )
+            }
+            if let breed = pet.breed?.trimmingCharacters(in: .whitespacesAndNewlines), !breed.isEmpty {
+                PawPalPill(text: breed, systemImage: nil, tint: PawPalTheme.secondaryText)
+            }
+            if let city = pet.home_city?.trimmingCharacters(in: .whitespacesAndNewlines), !city.isEmpty {
+                PawPalPill(text: city, systemImage: "location.fill", tint: PawPalTheme.accent)
+            }
+        }
+    }
+
+    /// Owner's secondary line shown beneath the pet identity. Falls back
+    /// through @handle → display name → email so the line is never empty.
+    private var ownerSecondaryLine: String {
+        if !profileHandle.isEmpty { return profileHandle }
+        if !accountDisplayName.isEmpty { return accountDisplayName }
+        return user.email ?? "—"
+    }
+
+    /// Lowercase-tolerant species → Chinese display-name mapping for the
+    /// hero pill. Mirrors the copy used by FeedView / PostDetailView so
+    /// the same pet reads the same everywhere.
+    private func heroSpeciesDisplayName(_ english: String) -> String {
+        switch english.lowercased() {
+        case "dog":             return "狗狗"
+        case "cat":             return "猫咪"
+        case "rabbit", "bunny": return "兔兔"
+        case "bird":            return "鸟类"
+        case "fish":            return "鱼类"
+        case "hamster":         return "仓鼠"
+        default:                return english
+        }
+    }
+
+    /// Full-width CTA rendered in place of the pet hero when the user
+    /// has no pets yet. Tapping the card opens the same add-pet editor
+    /// as the "+" on the pets rail — giving a brand-new account an
+    /// obvious, single next step from their own profile without making
+    /// them hunt for the rail's tiny ghost bubble.
+    private var addFirstPetHeroCard: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            showingAddPet = true
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(PawPalTheme.accentTint)
+                        .frame(width: 72, height: 72)
+                    Text("🐾")
+                        .font(.system(size: 30))
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("添加第一只宠物")
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                    Text("创建毛孩子的主页，才能发布 TA 的动态")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.secondaryText)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 6)
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(PawPalTheme.accent)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(PawPalTheme.accentTint)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(PawPalTheme.accent.opacity(0.28), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("add-first-pet-hero-card")
     }
 
     /// Bio line — either displays the user's bio (wrapped to 2 lines) with an
@@ -429,22 +634,26 @@ struct ProfileView: View {
                     .overlay(Circle().stroke(PawPalTheme.hairline, lineWidth: 1))
             }
             .buttonStyle(.plain)
+            // Instrumentation: share-tap viral-loop signal for the
+            // Me profile surface. Mirrors the post / pet surfaces
+            // above; `surface = "profile"` is the dimension.
+            .simultaneousGesture(TapGesture().onEnded {
+                AnalyticsService.shared.log(.shareTap, properties: ["surface": "profile"])
+            })
         }
     }
 
-    /// Placeholder deep link for the share sheet — `pawpal://u/<handle>` uses
-    /// the user's handle if set, else the uuid. Works even without real
-    /// deep-link handling: iOS will pass it through as a text URL in Messages
-    /// / Mail / etc. When we wire up universal links this call-site doesn't
-    /// need to change.
+    /// Deep link for the share sheet. Delegates to `ShareLinkBuilder` so
+    /// the URL shape (`pawpal://u/<handle-or-uuid>`) stays in one place.
+    /// Works even without real universal-link handling: iOS passes the
+    /// URL through as text in Messages / WeChat / 小红书 / etc., and the
+    /// `pawpal://` scheme round-trips on devices with the app installed.
     private var shareURLForSelf: URL {
-        let handle = profile?.username?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let slug = (handle?.isEmpty == false ? handle! : user.id.uuidString)
-        return URL(string: "pawpal://u/\(slug)") ?? URL(string: "https://pawpal.app")!
+        ShareLinkBuilder.profileURL(handle: profile?.username, userID: user.id)
     }
 
     private var shareMessage: String {
-        "来 PawPal 看看 \(accountDisplayName) 的毛孩子吧 🐾"
+        ShareLinkBuilder.profileShareMessage(displayName: accountDisplayName)
     }
 
     /// Reusable user-avatar bubble — used in the compact header.
@@ -790,6 +999,85 @@ struct ProfileView: View {
             .fill(PawPalTheme.hairline)
             .frame(height: 0.5)
             .padding(.horizontal, 20)
+    }
+
+    // MARK: - My Playdates row
+
+    /// Pinned "我的约玩" entry point — lives just below the highlights
+    /// strip so the flagship pet-to-pet surface is one tap away from
+    /// anywhere on the profile. A small warm-yellow badge shows the
+    /// count of pending invites where the viewer is the invitee
+    /// (mirrors the pinned request-card count on FeedView, so the two
+    /// surfaces agree on "how many things need my attention").
+    private var myPlaydatesRow: some View {
+        NavigationLink(value: MyPlaydatesDestination()) {
+            HStack(spacing: 12) {
+                // Icon tile — warm peach wash + calendar glyph. Same
+                // size + shape as the highlight cards above so the row
+                // visually continues the strip's rhythm.
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(PawPalTheme.accentTint)
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(PawPalTheme.accent)
+                }
+                .frame(width: 36, height: 36)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("我的约玩")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                    Text("查看发出的和收到的约玩邀请")
+                        .font(.system(size: 11))
+                        .foregroundStyle(PawPalTheme.secondaryText)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                if pendingInviteCount > 0 {
+                    Text("\(pendingInviteCount)")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(PawPalTheme.primaryText)
+                        .frame(minWidth: 18, minHeight: 18)
+                        .padding(.horizontal, 5)
+                        .background(PawPalTheme.amber, in: Capsule())
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(PawPalTheme.tertiaryText)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(PawPalTheme.subtleSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(PawPalTheme.hairline, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        })
+        .padding(.horizontal, 20)
+        .padding(.top, 2)
+        .padding(.bottom, 14)
+    }
+
+    /// Count of `proposed` playdate rows where the current user is the
+    /// invitee. Drives the badge on the "我的约玩" row. Re-derives on
+    /// every `PlaydateService` publication, so accept/decline taps
+    /// anywhere in the app clear the badge without a reload.
+    private var pendingInviteCount: Int {
+        playdateService.playdates.values.reduce(0) { acc, row in
+            acc + (row.status == .proposed && row.invitee_user_id == user.id ? 1 : 0)
+        }
     }
 
     // MARK: - Featured pet section
@@ -1442,10 +1730,17 @@ private struct ProfilePetEditorSheet: View {
     @State private var weightUnit: String
     @State private var homeCity: String
     @State private var bio: String
+    @State private var birthday: Date?
+    @State private var showingBirthdayPicker = false
     @State private var pickedAvatarItem: PhotosPickerItem?
     @State private var showingLocationPicker = false
     @State private var pickedAvatarData: Data?
     @State private var pickedAvatarImage: Image?
+    /// Playdate opt-in — defaults to whatever the pet row carries
+    /// (false for newly added pets / legacy rows without the column).
+    /// Wired into the onSave closure below so `PetsService.updatePet`
+    /// persists the toggle alongside the rest of the profile fields.
+    @State private var openToPlaydates: Bool
 
     private let ageUnits    = ["岁", "个月"]
     private let weightUnits = ["公斤", "斤"]
@@ -1466,12 +1761,17 @@ private struct ProfilePetEditorSheet: View {
     let existingAvatarURL: String?
     let isSaving: Bool
     let errorMessage: String?
-    let onSave: (String, String, String, String, String, String, String, String, Data?) async -> Bool
+    /// onSave arg order matches the textual form layout: basic fields,
+    /// then birthday, then the playdate opt-in, then the optional
+    /// avatar bytes. The `Bool` slot was inserted between `birthday` and
+    /// `pickedAvatarData` when the playdates MVP landed — mirroring the
+    /// pattern that added `birthday` itself earlier.
+    let onSave: (String, String, String, String, String, String, String, String, Date?, Bool, Data?) async -> Bool
 
     init(
         title: String, pet: RemotePet?, isSaving: Bool,
         errorMessage: String?,
-        onSave: @escaping (String, String, String, String, String, String, String, String, Data?) async -> Bool
+        onSave: @escaping (String, String, String, String, String, String, String, String, Date?, Bool, Data?) async -> Bool
     ) {
         self.title            = title
         self.existingAvatarURL = pet?.avatar_url
@@ -1484,6 +1784,12 @@ private struct ProfilePetEditorSheet: View {
         _sex      = State(initialValue: pet?.sex ?? "")
         _homeCity = State(initialValue: pet?.home_city ?? "")
         _bio      = State(initialValue: pet?.bio ?? "")
+        _birthday = State(initialValue: pet?.birthday)
+        // Default `true` on 2026-04-19 — matches the DB default flipped
+        // in migration 023. Legacy rows (nil column) show as on too;
+        // they'll be persisted as `true` on the next save. See
+        // docs/decisions.md → "Playdates are opt-out (default on)".
+        _openToPlaydates = State(initialValue: pet?.open_to_playdates ?? true)
         let ageUnits_    = ["岁", "个月"]
         let weightUnits_ = ["公斤", "斤"]
         let parsedAge    = Self.splitMeasurement(pet?.age,    fallbackUnit: "岁")
@@ -1634,6 +1940,26 @@ private struct ProfilePetEditorSheet: View {
                                         LocationPickerSheet(selection: $homeCity)
                                     }
                                 }
+
+                                Divider().padding(.leading, 16)
+
+                                fieldRow(label: "生日") {
+                                    Button { showingBirthdayPicker = true } label: {
+                                        HStack(spacing: 6) {
+                                            Text(birthday.map(Self.formatBirthday) ?? "选择日期")
+                                                .foregroundStyle(birthday == nil
+                                                    ? Color(.placeholderText)
+                                                    : PawPalTheme.primaryText)
+                                            Image(systemName: "calendar")
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(PawPalTheme.orange)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .sheet(isPresented: $showingBirthdayPicker) {
+                                        birthdayPickerSheet
+                                    }
+                                }
                             }
                             .background(Color(.systemBackground))
                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -1648,6 +1974,27 @@ private struct ProfilePetEditorSheet: View {
                                 .padding(16)
                                 .background(Color(.systemBackground))
                                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+
+                        // MARK: Playdate opt-in
+                        //
+                        // Default-off gate for receiving 约遛弯 invites.
+                        // Hidden from onboarding per §8 of the playdates
+                        // spec (one-job principle: onboarding is first-pet
+                        // creation, not feature tour).
+                        VStack(alignment: .leading, spacing: 10) {
+                            sectionLabel("遛弯")
+                            VStack(alignment: .leading, spacing: 6) {
+                                Toggle("开放遛弯邀请", isOn: $openToPlaydates)
+                                    .tint(PawPalTheme.accent)
+                                Text("其他毛孩子的主人可以直接发送邀请")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(Color(.systemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         }
 
                         // MARK: Error
@@ -1671,6 +2018,8 @@ private struct ProfilePetEditorSheet: View {
                                 let ok = await onSave(
                                     name, species, breed, sex,
                                     composedAge, composedWeight, homeCity, bio,
+                                    birthday,
+                                    openToPlaydates,
                                     pickedAvatarData
                                 )
                                 if ok { dismiss() }
@@ -1899,6 +2248,54 @@ private struct ProfilePetEditorSheet: View {
         default: return "其他"
         }
     }
+
+    // MARK: - Birthday picker
+
+    private var birthdayPickerSheet: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                DatePicker(
+                    "生日",
+                    selection: Binding(
+                        get: { birthday ?? Date() },
+                        set: { birthday = $0 }
+                    ),
+                    in: ...Date(),
+                    displayedComponents: .date
+                )
+                .datePickerStyle(.graphical)
+                .tint(PawPalTheme.accent)
+                .padding(.horizontal, 20)
+
+                if birthday != nil {
+                    Button {
+                        birthday = nil
+                        showingBirthdayPicker = false
+                    } label: {
+                        Text("清除生日")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(PawPalTheme.accent)
+                    }
+                }
+                Spacer()
+            }
+            .navigationTitle("选择生日")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { showingBirthdayPicker = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private static func formatBirthday(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_Hans_CN")
+        f.dateFormat = "yyyy年M月d日"
+        return f.string(from: date)
+    }
 }
 
 // MARK: - Account Editor Sheet
@@ -2094,31 +2491,12 @@ private struct ProfileAccountEditorSheet: View {
 
 // MARK: - Location Picker
 
-/// MKLocalSearchCompleter wrapper — publishes results as the query changes.
-@MainActor
-private final class LocationCompleter: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
-    @Published var results: [MKLocalSearchCompletion] = []
-    private let completer = MKLocalSearchCompleter()
-
-    override init() {
-        super.init()
-        completer.delegate = self
-        completer.resultTypes = .address
-    }
-
-    func search(_ query: String) {
-        completer.queryFragment = query
-    }
-
-    nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
-        let r = completer.results
-        Task { @MainActor in self.results = r }
-    }
-
-    nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
-        Task { @MainActor in self.results = [] }
-    }
-}
+// `LocationCompleter` was lifted to file scope at
+// `PawPal/Views/Components/LocationCompleter.swift` so the playdate
+// composer can share the MKLocalSearchCompleter wrapper without
+// duplicating the delegate plumbing. The `LocationPickerSheet` below
+// continues to use it — the rename from `private` to the file-scope
+// class is transparent to callers.
 
 private struct LocationPickerSheet: View {
     @Binding var selection: String

@@ -83,8 +83,16 @@ final class VirtualPetStateStore: ObservableObject {
     /// Returns the cached snapshot for a pet if we already fetched it,
     /// or nil if no row was found on the server (both profile screens
     /// treat nil as "fall back to the time-derived baseline").
+    ///
+    /// The returned snapshot has **time-based decay already applied** —
+    /// the bars drift while the owner isn't tapping so that re-opening
+    /// the profile hours later shows a hungrier, calmer pet. The
+    /// persisted snapshot on disk is unchanged; only the in-memory view
+    /// that callers render reflects the drift. See `decayedState` for
+    /// the rate constants.
     func state(for petID: UUID) -> PetStateSnapshot? {
-        petStates[petID]
+        guard let raw = petStates[petID] else { return nil }
+        return Self.decayedState(raw)
     }
 
     /// Ensures we have an up-to-date `pet_state` row cached for `petID`.
@@ -169,9 +177,20 @@ final class VirtualPetStateStore: ObservableObject {
     ) async {
         let delta = action.delta
 
-        // Start from the cached value if we have one, else the time-derived
-        // baseline that the UI is currently rendering.
-        let start = petStates[petID].map { ($0.mood, $0.hunger, $0.energy) } ?? baseline
+        // Start from the *decayed* cached value if we have one — that
+        // way an owner tapping 喂食 after a long break sees "pet was
+        // hungry, just fed → bar moves up from its low point" rather
+        // than "bar moves up from whatever it was 8h ago", which would
+        // feel disconnected from what the bars are currently showing.
+        // If we have no persisted row, fall back to the time-derived
+        // baseline the UI renders.
+        let start: (Int, Int, Int)
+        if let cached = petStates[petID] {
+            let decayed = Self.decayedState(cached)
+            start = (decayed.mood, decayed.hunger, decayed.energy)
+        } else {
+            start = baseline
+        }
         let next = PetStateSnapshot(
             mood:   clamp(start.0 + delta.mood),
             hunger: clamp(start.1 + delta.hunger),
@@ -210,6 +229,67 @@ final class VirtualPetStateStore: ObservableObject {
         } catch {
             print("[VirtualPetStateStore] applyAction 失败 (\(action)) for \(petID): \(error)")
         }
+    }
+
+    // MARK: - Time-based decay
+
+    // Tunable: 饱食 (hunger) drops by this many points per hour since
+    // the last persisted `updated_at`. Calibrated so a pet left alone
+    // overnight reads visibly hungry (~9h × 3 = 27 points down) but
+    // not dead — the owner should feel a nudge, not guilt.
+    private static let hungerDecayPerHour: Double = -3.0
+
+    // Tunable: 活力 (energy) recovers while the pet rests. A capped
+    // positive rate keeps it from pinning at 100 instantly after play;
+    // the DB CHECK constraint (0..100) plus our clamp handle the upper
+    // bound.
+    private static let energyRecoveryPerHour: Double = 2.0
+
+    // Tunable: 心情 (mood) drifts downward slowly. Smaller magnitude
+    // than hunger because mood is meant to be "sticky" — one great
+    // play session should keep the bar high across a few hours of
+    // neglect.
+    private static let moodDecayPerHour: Double = -1.0
+
+    /// Applies time-based decay to a persisted snapshot and returns a
+    /// fresh one carrying the drifted values. The `updatedAt` on the
+    /// returned snapshot intentionally stays pointing at the persisted
+    /// server time — that's our origin for the next decay calculation
+    /// and only moves forward when the owner actually taps an action.
+    ///
+    /// Decay rates (per hour, see tunable constants above):
+    ///   * 饱食 (hunger):  -3
+    ///   * 活力 (energy):  +2  (capped at 100)
+    ///   * 心情 (mood):    -1
+    ///
+    /// The persisted row on Supabase is **never** mutated by this
+    /// function — it's a pure read-side transform that the UI applies
+    /// every time it reads the snapshot. `applyAction` is responsible
+    /// for persisting the "tap delta on top of decayed baseline" value
+    /// when the owner interacts.
+    static func decayedState(
+        _ snapshot: PetStateSnapshot,
+        at now: Date = Date()
+    ) -> PetStateSnapshot {
+        // Guard against clock skew — if `updatedAt` ever ends up in
+        // the future (device time reset, test fixture, etc.) treat the
+        // elapsed window as zero so we don't apply reverse decay.
+        let elapsed = max(0, now.timeIntervalSince(snapshot.updatedAt))
+        let hours = elapsed / 3600.0
+
+        let moodDrift   = Int((moodDecayPerHour * hours).rounded())
+        let hungerDrift = Int((hungerDecayPerHour * hours).rounded())
+        let energyDrift = Int((energyRecoveryPerHour * hours).rounded())
+
+        func clampStatic(_ value: Int) -> Int { min(100, max(0, value)) }
+
+        var next = snapshot
+        next.mood   = clampStatic(snapshot.mood   + moodDrift)
+        next.hunger = clampStatic(snapshot.hunger + hungerDrift)
+        next.energy = clampStatic(snapshot.energy + energyDrift)
+        // Leave updatedAt alone — it's the origin of the decay window
+        // and must only advance when we genuinely persist a new value.
+        return next
     }
 
     // MARK: - Helpers

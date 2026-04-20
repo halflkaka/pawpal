@@ -11,11 +11,17 @@ struct RemotePost: Identifiable, Codable, Hashable {
     let created_at: Date
 
     let pets: RemotePet?
+    /// Joined via `profiles!owner_user_id(*)` in PostsService.selectLevels.
+    /// Optional because the bare-minimum fallback level doesn't include it,
+    /// and because older schema states may not have the FK hint available.
+    let profiles: RemoteProfile?
     let post_images: [RemotePostImage]
     var likes: [RemoteLike]          // likes table uses user_id (our own schema)
     var comments: [RemoteCommentStub]
 
     var pet: RemotePet? { pets }
+    /// Alias so call-sites read naturally (`post.owner?.username`).
+    var owner: RemoteProfile? { profiles }
 
     var sortedImages: [RemotePostImage] {
         post_images.sorted { $0.position < $1.position }
@@ -36,7 +42,7 @@ struct RemotePost: Identifiable, Codable, Hashable {
     // MARK: - Codable
 
     enum CodingKeys: String, CodingKey {
-        case id, owner_user_id, pet_id, caption, mood, created_at, pets, post_images, likes, comments
+        case id, owner_user_id, pet_id, caption, mood, created_at, pets, profiles, post_images, likes, comments
     }
 
     init(from decoder: Decoder) throws {
@@ -48,6 +54,7 @@ struct RemotePost: Identifiable, Codable, Hashable {
         mood          = try c.decodeIfPresent(String.self,        forKey: .mood)
         created_at    = try c.decode(Date.self,                   forKey: .created_at)
         pets          = try c.decodeIfPresent(RemotePet.self,     forKey: .pets)
+        profiles      = try c.decodeIfPresent(RemoteProfile.self, forKey: .profiles)
         post_images   = (try? c.decode([RemotePostImage].self,    forKey: .post_images)) ?? []
         likes         = (try? c.decode([RemoteLike].self,         forKey: .likes))       ?? []
         comments      = (try? c.decode([RemoteCommentStub].self,  forKey: .comments))    ?? []
@@ -56,12 +63,13 @@ struct RemotePost: Identifiable, Codable, Hashable {
     init(
         id: UUID, owner_user_id: UUID, pet_id: UUID,
         caption: String, mood: String?, created_at: Date,
-        pets: RemotePet?, post_images: [RemotePostImage],
+        pets: RemotePet?, profiles: RemoteProfile? = nil,
+        post_images: [RemotePostImage],
         likes: [RemoteLike] = [], comments: [RemoteCommentStub] = []
     ) {
         self.id = id; self.owner_user_id = owner_user_id; self.pet_id = pet_id
         self.caption = caption; self.mood = mood; self.created_at = created_at
-        self.pets = pets; self.post_images = post_images
+        self.pets = pets; self.profiles = profiles; self.post_images = post_images
         self.likes = likes; self.comments = comments
     }
 }

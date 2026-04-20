@@ -103,6 +103,18 @@ struct VirtualPetView: View {
     var externalEnergy: Int? = nil
     /// Optional callback so the parent can persist the accessory choice.
     var onAccessoryChanged: ((DogAvatar.Accessory) -> Void)? = nil
+    /// Whether the viewing user owns this pet. Gates the dress-up
+    /// affordance — only the owner should be able to pick an accessory
+    /// for their own pet. Non-owners see the current accessory render on
+    /// the stage but the 🎀/🎩/👓 chip row is hidden entirely so there's
+    /// no "tap doesn't do anything" UX (the RLS policy would silently
+    /// reject a visitor's write).
+    ///
+    /// Defaults to `true` so preview call sites and legacy screens keep
+    /// their existing behaviour. `PetProfileView` explicitly passes its
+    /// own `canEdit` through; `ProfileView` (the Me tab) is always the
+    /// owner so it can leave this at the default.
+    var canEdit: Bool = true
     /// Fires once per tap-to-boop. `PetProfileView` uses this to debounce
     /// taps and batch-increment the pet's shared `boop_count` in the
     /// backend (CHANGELOG #38). Owner screens (`ProfileView`) can leave
@@ -257,7 +269,13 @@ struct VirtualPetView: View {
             // live inside `LargeDog`. For cats/rabbits/birds/etc the stage
             // uses `PetCharacterView`, which has no accessory layer, so
             // hide the chips entirely for non-dog species.
-            if state.isDog {
+            //
+            // Additionally gated on `canEdit` — only the owner should be
+            // able to dress up their pet. Visitors viewing a friend's pet
+            // still see the current accessory render on the stage, but
+            // the chip row is hidden so they can't try to change it
+            // (backend RLS would reject the write anyway).
+            if state.isDog && canEdit {
                 HStack(spacing: 8) {
                     accessoryButton(label: "🎀", for: .bow)
                     accessoryButton(label: "🎩", for: .hat)
@@ -623,13 +641,17 @@ struct VirtualPetView: View {
         case "dog", "":
             // Legacy dog path — branch on breed variant.
             switch variant {
-            case .golden:  return ["这是零食吗？", "好喜欢你", "出去玩吗?", "*摇尾巴ing*", "嗨嗨嗨嗨"]
-            case .corgi:   return ["溜达溜达溜达", "小短腿能量", "汪!", "我能跳!!", "蝴蝶结激活"]
-            case .shiba:   return ["一脸嫌弃", "哼。", "好吧,摸我。", "shibe.", "需要零食"]
-            case .husky:   return ["那是松鼠吗", "嗷呜——", "下雪了??", "戏剧性叹气", "跟我跑"]
-            case .poodle:  return ["优雅.", "拍照?", "新造型", "高贵地汪", "SPA哪天"]
-            case .beagle:  return ["嗅嗅嗅", "吃的?", "那是吃的?", "调查中...", "汪汪汪"]
-            case .pug:     return ["zzz...", "呼——噜", "睡觉时间", "*打呼*", "困困的"]
+            case .golden:       return ["这是零食吗？", "好喜欢你", "出去玩吗?", "*摇尾巴ing*", "嗨嗨嗨嗨"]
+            case .corgi:        return ["溜达溜达溜达", "小短腿能量", "汪!", "我能跳!!", "蝴蝶结激活"]
+            case .shiba:        return ["一脸嫌弃", "哼。", "好吧,摸我。", "shibe.", "需要零食"]
+            case .husky:        return ["那是松鼠吗", "嗷呜——", "下雪了??", "戏剧性叹气", "跟我跑"]
+            case .poodle:       return ["优雅.", "拍照?", "新造型", "高贵地汪", "SPA哪天"]
+            case .beagle:       return ["嗅嗅嗅", "吃的?", "那是吃的?", "调查中...", "汪汪汪"]
+            case .pug:          return ["zzz...", "呼——噜", "睡觉时间", "*打呼*", "困困的"]
+            case .borderCollie: return ["看我接飞盘!", "待命中", "羊呢?", "训练时间", "聪明如我"]
+            case .cavapoo:      return ["抱抱可以吗?", "软软的", "卷毛造型", "撒娇模式", "喜欢你~"]
+            case .labrador:     return ["有吃的吗?", "散步散步!", "新朋友好", "摇尾巴不停", "我最乖"]
+            case .dalmatian:    return ["数数我的斑点", "跑起来!", "我有101个朋友", "消防车在哪", "斑点不会掉"]
             }
         default:
             // Unknown species string — generic friendly pool.
@@ -914,6 +936,38 @@ struct LargeDog: View {
                 belly:  Color(red: 0.961, green: 0.875, blue: 0.710),
                 spot:   nil
             )
+        case .borderCollie:
+            return Palette(
+                body:   Color(red: 0.122, green: 0.102, blue: 0.090),  // #1F1A17
+                ear:    Color(red: 0.122, green: 0.102, blue: 0.090),  // #1F1A17
+                muzzle: .white,                                        // #FFFFFF
+                belly:  .white,                                        // #FFFFFF — border collies have white chests
+                spot:   .white                                         // #FFFFFF — forehead blaze
+            )
+        case .cavapoo:
+            return Palette(
+                body:   Color(red: 0.953, green: 0.851, blue: 0.706),  // #F3D9B4
+                ear:    Color(red: 0.898, green: 0.722, blue: 0.529),  // #E5B887
+                muzzle: Color(red: 0.984, green: 0.922, blue: 0.827),  // #FBEBD3
+                belly:  Color(red: 0.984, green: 0.922, blue: 0.827),  // #FBEBD3 — paler cream underside
+                spot:   nil
+            )
+        case .labrador:
+            return Palette(
+                body:   Color(red: 0.929, green: 0.800, blue: 0.561),  // #EDCC8F
+                ear:    Color(red: 0.847, green: 0.698, blue: 0.412),  // #D8B269
+                muzzle: Color(red: 0.973, green: 0.918, blue: 0.780),  // #F8EAC7
+                belly:  Color(red: 0.973, green: 0.918, blue: 0.780),  // #F8EAC7
+                spot:   nil
+            )
+        case .dalmatian:
+            return Palette(
+                body:   Color(red: 0.961, green: 0.961, blue: 0.961),  // #F5F5F5
+                ear:    Color(red: 0.122, green: 0.102, blue: 0.090),  // #1F1A17
+                muzzle: Color(red: 0.965, green: 0.965, blue: 0.965),  // #F6F6F6
+                belly:  .white,                                        // #FFFFFF
+                spot:   Color(red: 0.122, green: 0.102, blue: 0.090)   // #1F1A17 — dark forehead spot
+            )
         }
     }
 
@@ -1061,6 +1115,29 @@ private extension Color {
                 s.hunger = 55
                 s.energy = 68
                 s.thought = "呼噜呼噜"
+                return s
+            }())
+            // Border Collie — eyeball the new #1F1A17 body + white blaze
+            // against the stage's gradient floor.
+            VirtualPetView(state: {
+                var s = VirtualPetState.preview
+                s.name = "Pip"
+                s.breed = "边牧"
+                s.variant = .borderCollie
+                s.background = Color(red: 0.898, green: 0.925, blue: 0.949)
+                s.thought = "看我接飞盘!"
+                return s
+            }())
+            // Dalmatian — checks the near-white body silhouette pops
+            // against the stage floor and the spot mechanic reads as the
+            // signature forehead marking.
+            VirtualPetView(state: {
+                var s = VirtualPetState.preview
+                s.name = "Pepper"
+                s.breed = "斑点狗"
+                s.variant = .dalmatian
+                s.background = Color(red: 0.945, green: 0.945, blue: 0.965)
+                s.thought = "数数我的斑点"
                 return s
             }())
         }
